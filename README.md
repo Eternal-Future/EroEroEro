@@ -9,6 +9,7 @@
 | `nh` | nhentai | v2 API，匿名可用，可配 API Key |
 | `eh` | e-hentai / exhentai | 自动优先 EXH；igneous 失效或拿不到时回退 EH |
 | `jm` | 禁漫 / JMComic | 游客搜索+详情，响应 AES-ECB 本地解密 |
+| `bk` | 哔咔 / PicAcg | 需账号，自动登录并缓存 token |
 
 ## 功能
 
@@ -92,6 +93,10 @@ vercel
 | `EHENTAI_IGNEOUS` | 手动指定已获取的 igneous；Workers/Vercel 可喂入 D1/KV 持久化的值 | 无 |
 | `EHENTAI_STATE_DIR` | 本地持久化目录 | `.data` |
 | `EHENTAI_SQLITE_FILE` | 本地 SQLite 文件名 | `eh.sqlite` |
+| `BK_EMAIL` / `BK_PASSWORD` | 哔咔账号，用于自动登录 | 无 |
+| `BK_TOKEN` | 已登录的哔咔 token，可绕过账号登录 | 无 |
+| `BK_API_BASE` | 哔咔 API 基地址 | `https://picaapi.go2778.com` |
+| `BK_IMAGE_QUALITY` | 图片质量：`low`/`medium`/`high`/`original` | `original` |
 
 `.env` 会自动加载。模板见 `.env.example`。
 

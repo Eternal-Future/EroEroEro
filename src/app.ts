@@ -136,7 +136,9 @@ app.get("/api/source/:source/search", async (c) => {
       ? "eh"
       : it.variant === "jm"
         ? "jm"
-        : "nh";
+        : it.variant === "bk"
+          ? "bk"
+          : "nh";
 
   const formatItems = (items: Array<any>) =>
     items.map((it) => ({
@@ -170,15 +172,19 @@ app.get("/api/source/:source/search", async (c) => {
     const nh = getSource("nh")!;
     const eh = getSource("eh")!;
     const jm = getSource("jm")!;
-    const [a, b, d] = await Promise.allSettled([
-      nh.search({ query, tagId, tagName, sort: c.req.query("sort"), page, key }),
-      eh.search({ query, tagId, tagName, sort: c.req.query("sort"), page, key }),
-      jm.search({ query, tagId, tagName, sort: c.req.query("sort"), page, key }),
+    const bk = getSource("bk")!;
+    const sortRaw = c.req.query("sort");
+    const [nhR, ehR, jmR, bkR] = await Promise.allSettled([
+      nh.search({ query, tagId, tagName, sort: sortRaw, page, key }),
+      eh.search({ query, tagId, tagName, sort: sortRaw, page, key }),
+      jm.search({ query, tagId, tagName, sort: sortRaw, page, key }),
+      bk.search({ query, tagId, tagName, sort: sortRaw, page, key }),
     ]);
     const items = [
-      ...(a.status === "fulfilled" ? a.value.items : []),
-      ...(b.status === "fulfilled" ? b.value.items : []),
-      ...(d.status === "fulfilled" ? d.value.items : []),
+      ...(nhR.status === "fulfilled" ? nhR.value.items : []),
+      ...(ehR.status === "fulfilled" ? ehR.value.items : []),
+      ...(jmR.status === "fulfilled" ? jmR.value.items : []),
+      ...(bkR.status === "fulfilled" ? bkR.value.items : []),
     ];
 
     const nhItems = items.filter((it) => sourceOf(it) === "nh");
@@ -193,9 +199,10 @@ app.get("/api/source/:source/search", async (c) => {
       items: formatItems(items),
       page,
       num_pages: Math.max(
-        a.status === "fulfilled" ? a.value.num_pages : 1,
-        b.status === "fulfilled" ? b.value.num_pages : 1,
-        d.status === "fulfilled" ? d.value.num_pages : 1,
+        nhR.status === "fulfilled" ? nhR.value.num_pages : 1,
+        ehR.status === "fulfilled" ? ehR.value.num_pages : 1,
+        jmR.status === "fulfilled" ? jmR.value.num_pages : 1,
+        bkR.status === "fulfilled" ? bkR.value.num_pages : 1,
       ),
       per_page: 25,
       total: null,

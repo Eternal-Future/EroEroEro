@@ -18,9 +18,13 @@ const SOURCE_ALIASES: Record<string, string> = {
   jm: "jm",
   jmcomic: "jm",
   "18comic": "jm",
+  bk: "bk",
+  bika: "bk",
+  picacg: "bk",
+  picacomic: "bk",
 };
 
-const TAG_RE = /(-)?(nh|eh|jm|nhentai|ehentai|exhentai|jmcomic|18comic):(?:"([^"]+)"|([^\s&]+))/gi;
+const TAG_RE = /(-)?(nh|eh|jm|bk|nhentai|ehentai|exhentai|jmcomic|18comic|bika|picacg|picacomic):(?:"([^"]+)"|([^\s&]+))/gi;
 
 function canonicalSource(rawAlias: string): string {
   return SOURCE_ALIASES[rawAlias.toLowerCase()] ?? rawAlias.toLowerCase();
@@ -163,7 +167,7 @@ export async function aggregateSearch(
   key?: string,
   scope?: string[],
 ): Promise<NormalizedSearchResult> {
-  const defaultSources = scope && scope.length ? scope : ["nh", "eh", "jm"];
+  const defaultSources = scope && scope.length ? scope : ["nh", "eh", "jm", "bk"];
   const branches = parseBranches(raw);
   const globalNegatives = new Map<string, string[]>();
   for (const branch of branches) {

@@ -11,6 +11,7 @@ import { fetchMedia as fetchMediaWithServers, serverOrigin } from "./media";
 import { searchEh, ehGallery, ehFetchMedia, ehBrowseTags } from "./ehentai";
 import { suggestEhTags, ehKeysForLocalizedQuery, ehCanonicalTagsFor } from "./ehtags";
 import { jmSearch, jmGallery, jmFetchMedia, jmTags, jmBrowseTags } from "./jm";
+import { bkSearch, bkGallery, bkFetchMedia, bkTags, bkBrowseTags } from "./bk";
 import type { SortOrder } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -303,6 +304,34 @@ const jmAdapter: SourceAdapter = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// bk adapter (哔咔 / PicAcg)
+// ---------------------------------------------------------------------------
+const bkAdapter: SourceAdapter = {
+  id: "bk",
+  name: "哔咔",
+
+  async search(opts) {
+    return bkSearch({ query: opts.query ?? opts.tagName ?? "", page: opts.page ?? 1 });
+  },
+
+  async gallery(id) {
+    return bkGallery(id);
+  },
+
+  async tags(query, limit) {
+    return bkTags(query, limit);
+  },
+
+  async browseTags(type, page) {
+    return bkBrowseTags(type, page);
+  },
+
+  async fetchMedia(path) {
+    return bkFetchMedia(path, "image");
+  },
+};
+
 const registry: Record<string, SourceAdapter> = {
   nh: nhAdapter,
   nhentai: nhAdapter,
@@ -313,6 +342,10 @@ const registry: Record<string, SourceAdapter> = {
   jm: jmAdapter,
   jmcomic: jmAdapter,
   "18comic": jmAdapter,
+  bk: bkAdapter,
+  bika: bkAdapter,
+  picacg: bkAdapter,
+  picacomic: bkAdapter,
 };
 
 export function getSource(name: string): SourceAdapter | undefined {
@@ -324,6 +357,7 @@ export function listSources(): Array<{ id: string; name: string }> {
     { id: "nh", name: "nhentai" },
     { id: "eh", name: "e-hentai" },
     { id: "jm", name: "jm" },
+    { id: "bk", name: "哔咔" },
   ];
 }
 

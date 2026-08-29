@@ -52,7 +52,7 @@
     group: "社团",
     category: "分类",
   };
-  const SOURCES = { nh: "nhentai", eh: "E-Hentai", jm: "禁漫" };
+  const SOURCES = { nh: "nhentai", eh: "E-Hentai", jm: "禁漫", bk: "哔咔" };
 
   const PRELOAD_DEFAULT = 5;
   function readPreloadCount() {
@@ -123,6 +123,11 @@
     if (v === "jm") {
       const badge = el("span", "src-badge badge-jm", "JM");
       badge.title = "此漫画来自于 禁漫";
+      return badge;
+    }
+    if (v === "bk") {
+      const badge = el("span", "src-badge badge-bk", "BK");
+      badge.title = "此漫画来自于 哔咔";
       return badge;
     }
     const name = v === "nh" ? "NH" : String(v).toUpperCase();
@@ -382,7 +387,7 @@
     scheduleSearchPreview(v);
 
     const m = v.match(/^([A-Za-z0-9]+):(.*)$/);
-    if (m && m[1] && m[2].length >= 1 && SOURCES[m[1]] && m[1] !== "jm") {
+    if (m && m[1] && m[2].length >= 1 && SOURCES[m[1]] && m[1] !== "jm" && m[1] !== "bk") {
       clearTimeout(tagSuggestTimer);
       tagSuggestTimer = setTimeout(() => fetchTagSuggest(m[1], m[2]), 180);
     } else {
@@ -450,7 +455,7 @@
     closeSearchPreview();
     if (!v || !v.trim() || v.length < 2 || /^tag:/.test(v)) return;
     const channelMatch = v.match(/^([A-Za-z0-9]+):/);
-    if (channelMatch && SOURCES[channelMatch[1]] && channelMatch[1] !== "jm") return; // tag suggestion territory
+    if (channelMatch && SOURCES[channelMatch[1]] && channelMatch[1] !== "jm" && channelMatch[1] !== "bk") return; // tag suggestion territory
     clearTimeout(previewTimer);
     previewTimer = setTimeout(async () => {
       try {
@@ -793,14 +798,14 @@
       const v = els.q.value.trim();
       const single = v.match(/^([A-Za-z0-9]+):([^\s&"]+)$/);
       // "<channel>:<tag>" with no spaces/quotes/& -> search that single tag by name.
-      if (single && SOURCES[single[1]] && single[1] !== "jm") {
+      if (single && SOURCES[single[1]] && single[1] !== "jm" && single[1] !== "bk") {
         selectTagByName(single[2], single[1]);
         return;
       }
-      // jm has no tag suggestions: channel prefix means keyword search in jm,
-      // keep the "jm:" prefix visible instead of rewriting the input.
-      if (single && single[1] === "jm") {
-        state.source = "jm";
+      // jm/bk have no tag suggestions: channel prefix means keyword search,
+      // keep the "channel:" prefix visible instead of rewriting the input.
+      if (single && (single[1] === "jm" || single[1] === "bk")) {
+        state.source = single[1];
         state.tagId = null;
         state.tagName = "";
         state.query = v;
