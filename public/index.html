@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+  <title>EroEroEro · comic search</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%98%95%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand" role="button" tabindex="0" data-home>
+      <span class="brand-mark">☕</span>
+      <span class="brand-name">EroEroEro</span>
+      <span class="brand-sub">comic search</span>
+    </div>
+    <div class="topbar-meta" id="topbar-meta">源：nhentai · 全流量经本服务代理</div>
+  </header>
+
+  <main class="wrap">
+    <!-- 搜索视图 -->
+    <section id="view-search">
+      <form id="search-form" class="searchbar" autocomplete="off">
+        <input id="q" class="search-input" type="search" placeholder="搜索标题 / 关键词，例如 tag:&quot;big breasts&quot;" />
+        <select id="sort" class="select" aria-label="排序">
+          <option value="date">最新</option>
+          <option value="popular">热门</option>
+          <option value="popular-today">24小时热门</option>
+          <option value="popular-week">本周热门</option>
+          <option value="popular-month">本月热门</option>
+        </select>
+        <button class="btn btn-primary" type="submit">搜索</button>
+      </form>
+
+      <div class="tagzone">
+        <div class="tagzone-head">
+          <div class="tabs" id="tag-type-tabs"></div>
+          <div class="tag-find">
+            <input id="tag-q" class="input" type="text" placeholder="找标签…" />
+            <div id="tag-suggest" class="suggest"></div>
+          </div>
+        </div>
+        <div class="chips" id="tag-chips"></div>
+      </div>
+
+      <div id="active-filter" class="active-filter" hidden>
+        <span id="active-filter-text"></span>
+        <button class="chip chip-x" data-clear-filter>清除 ✕</button>
+      </div>
+
+      <div id="status" class="status"></div>
+      <div id="grid" class="grid"></div>
+      <nav id="pager" class="pager" hidden></nav>
+    </section>
+
+    <!-- 详情视图 -->
+    <section id="view-detail" class="detail" hidden>
+      <button class="btn btn-ghost" data-back>← 返回</button>
+      <div class="detail-head">
+        <img id="d-cover" class="cover" alt="cover" />
+        <div class="detail-info">
+          <h1 id="d-title" class="d-title"></h1>
+          <div id="d-jp" class="d-jp"></div>
+          <div id="d-meta" class="d-meta"></div>
+          <div id="d-tags" class="chips"></div>
+          <div class="actions">
+            <button class="btn btn-primary" data-read>在线预览</button>
+            <button class="btn btn-accent" data-download>下载 ZIP</button>
+          </div>
+          <div id="dl-progress-wrap" class="dl-progress" hidden>
+            <div id="dl-progress" class="dl-progress-bar"></div>
+            <div id="dl-progress-text" class="dl-progress-text"></div>
+          </div>
+        </div>
+      </div>
+      <h2 class="pages-title">页面</h2>
+      <div id="d-pages" class="pages"></div>
+    </section>
+  </main>
+
+  <!-- 阅读器 -->
+  <div id="reader" class="reader" hidden>
+    <div class="reader-top">
+      <span id="reader-count" class="reader-count"></span>
+      <button class="btn btn-ghost" data-reader-close>✕ 关闭</button>
+    </div>
+    <div class="reader-stage">
+      <button class="reader-nav reader-prev" data-reader-prev>‹</button>
+      <img id="reader-img" class="reader-img" alt="page" />
+      <button class="reader-nav reader-next" data-reader-next>›</button>
+    </div>
+    <div class="reader-hint">←/→ 翻页 · Esc 关闭 · 点击左右侧翻页</div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

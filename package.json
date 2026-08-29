@@ -1,0 +1,26 @@
+{
+  "name": "eroeroero",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "EroEroEro — minimal comic search/proxy app. First source: nhentai.",
+  "scripts": {
+    "build:assets": "node scripts/build-assets.mjs",
+    "build": "node scripts/build-assets.mjs && esbuild src/node.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/server.mjs",
+    "typecheck": "tsc --noEmit",
+    "dev": "node scripts/build-assets.mjs && tsx src/node.ts",
+    "start": "node dist/server.mjs",
+    "deploy:workers": "wrangler deploy"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.14.0",
+    "hono": "^4.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "wrangler": "^3.114.0"
+  }
+}
