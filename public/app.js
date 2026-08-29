@@ -47,7 +47,7 @@
     group: "社团",
     category: "分类",
   };
-  const SOURCES = { nh: "nhentai" };
+  const SOURCES = { nh: "nhentai", eh: "E-Hentai" };
 
   const PRELOAD_DEFAULT = 5;
   function readPreloadCount() {
@@ -107,9 +107,16 @@
     return node;
   }
 
-  function sourceBadge() {
-    const name = state.source === "nh" ? "NH" : state.source.toUpperCase();
-    const label = SOURCES[state.source] || state.source;
+  function sourceBadge(variant) {
+    const v = variant || state.source;
+    if (v === "exh" || v === "eh") {
+      const label = v === "exh" ? "ExHentai" : "E-Hentai";
+      const badge = el("span", "src-badge badge-eh", v === "exh" ? "EXH" : "EH");
+      badge.title = "此漫画来自于 " + label;
+      return badge;
+    }
+    const name = v === "nh" ? "NH" : String(v).toUpperCase();
+    const label = SOURCES[v] || v;
     const badge = el("span", "src-badge", name);
     badge.title = "此漫画来自于 " + label;
     return badge;
@@ -256,7 +263,7 @@
       const m = el("div", "card-meta");
       m.append(el("span", null, it.pages + " 页"));
       m.append(el("span", null, "♥ " + fmt(it.favorites)));
-      m.append(sourceBadge());
+      m.append(sourceBadge(it.variant));
       body.append(t, m);
       a.append(img, body);
       frag.append(a);
@@ -580,12 +587,17 @@
     const pfrag = document.createDocumentFragment();
     for (const p of g.pages) {
       const box = el("div", "page");
-      const img = document.createElement("img");
-      img.loading = "lazy";
-      img.decoding = "async";
-      img.alt = "第 " + p.number + " 页";
-      img.src = p.thumb;
-      box.append(img);
+      if (p.thumb) {
+        const img = document.createElement("img");
+        img.loading = "lazy";
+        img.decoding = "async";
+        img.alt = "第 " + p.number + " 页";
+        img.src = p.thumb;
+        box.append(img);
+      } else {
+        const ph = el("div", "page-ph", String(p.number));
+        box.append(ph);
+      }
       box.append(el("span", "page-n", String(p.number)));
       box.addEventListener("click", () => openReader(g, p.number));
       pfrag.append(box);

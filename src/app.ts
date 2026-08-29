@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { index_html, style_css, app_js, sw_js } from "./assets";
 import { getEnv } from "./env";
 import { NhentaiError } from "./nhentai";
-import { fetchMedia, fetchMediaBuffer, isValidMediaPath, serverOrigin } from "./media";
+import { EhError } from "./ehentai";
 import { getCachedImage, imageCacheKey, putCachedImage } from "./imageCache";
 import {
   buildMediaUrl,
@@ -135,6 +135,7 @@ app.get("/api/source/:source/gallery/:id", async (c) => {
     upload_date: g.upload_date,
     num_pages: g.num_pages,
     num_favorites: g.num_favorites,
+    variant: g.variant ?? adapter.id,
     cover: buildMediaUrl(adapter.id, g.cover.path, "thumb"),
     thumb: buildMediaUrl(adapter.id, g.thumbnail.path, "thumb"),
     tags: g.tags,
@@ -183,7 +184,6 @@ app.get("/api/source/:source/img", async (c) => {
   const adapter = src(c);
   const path = c.req.query("path") ?? "";
   const kind = c.req.query("kind") === "image" ? "image" : "thumb";
-  if (!isValidMediaPath(path)) return c.json({ error: "bad media path" }, 400);
 
   const cacheKey = imageCacheKey(adapter.id, kind, path);
   let data: Uint8Array;
@@ -196,10 +196,9 @@ app.get("/api/source/:source/img", async (c) => {
     contentType = cached.contentType;
   } else {
     cacheHit = false;
-    const servers = await adapter.mediaServers(kind);
-    const fetched = await fetchMediaBuffer(path, servers);
-    data = fetched.data;
-    contentType = fetched.contentType;
+    const { response } = await adapter.fetchMedia(path, kind);
+    data = new Uint8Array(await response.arrayBuffer());
+    contentType = response.headers.get("content-type") ?? "application/octet-stream";
     putCachedImage(cacheKey, data, contentType);
   }
 
@@ -234,7 +233,6 @@ app.get("/api/source/:source/download/:id", async (c) => {
   if (!id) return c.json({ error: "invalid gallery id" }, 400);
 
   const g = await adapter.gallery(id, authKey(c));
-  const imageServers = await adapter.mediaServers("image");
 
   const folder = sanitize(`${g.id} ${g.pretty || g.title || "gallery"}`)
     .slice(0, 80)
@@ -255,16 +253,21 @@ app.get("/api/source/:source/download/:id", async (c) => {
     2,
   );
 
-  const ext = (path: string) => path.split(".").pop()?.toLowerCase() || "jpg";
+  const ext = (path: string) => path.split(".").pop()?.toLowerCase() || "img";
   const pageName = (p: NormalizedPage) =>
     `${folder}/${String(p.number).padStart(4, "0")}.${ext(p.path)}`;
+
+  const fetchPage = async (p: NormalizedPage, preferred?: string) => {
+    const r = await adapter.fetchMedia(p.path, "image", preferred);
+    return { response: r.response, serverHint: r.serverHint };
+  };
 
   const entries = (async function* () {
     yield {
       name: `${folder}/meta.json`,
       open: async () => new TextEncoder().encode(meta) as Uint8Array,
     };
-    yield* fetchPagesBuffered(g.pages, 4, pageName, imageServers);
+    yield* fetchPagesBuffered(g.pages, 4, pageName, fetchPage);
   })();
 
   const asciiName = (
@@ -290,6 +293,9 @@ app.onError((err, c) => {
   if (err instanceof NhentaiError) {
     return c.json({ error: err.message, status: err.status }, { status: err.status as any });
   }
+  if (err instanceof EhError) {
+    return c.json({ error: err.message, status: err.status }, { status: err.status as any });
+  }
   const message = err instanceof Error ? err.message : String(err);
   console.error("[ero-cubed]", message);
   return c.json({ error: "internal error", detail: message }, 500);
@@ -298,11 +304,11 @@ app.onError((err, c) => {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-async function* fetchPagesBuffered(
+const fetchPagesBuffered = async function* (
   pages: NormalizedPage[],
   limit: number,
   nameFor: (p: NormalizedPage) => string,
-  servers: string[],
+  fetchPage: (p: NormalizedPage, preferred?: string) => Promise<{ response: Response; serverHint?: string }>,
 ): AsyncGenerator<{ name: string; open: () => Promise<Uint8Array> }, void, void> {
   let preferredServer: string | undefined;
   const results = new Map<number, Uint8Array>();
@@ -325,11 +331,8 @@ async function* fetchPagesBuffered(
       const i = next++;
       (async () => {
         try {
-          const { response, url } = await fetchMedia(pages[i].path, servers, {
-            preferredServer,
-            timeoutMs: 12000,
-          });
-          preferredServer = serverOrigin(url);
+          const { response, serverHint } = await fetchPage(pages[i], preferredServer);
+          if (serverHint) preferredServer = serverHint;
           results.set(i, new Uint8Array(await response.arrayBuffer()));
         } catch (e) {
           error = e instanceof Error ? e : new Error(String(e));
@@ -360,7 +363,7 @@ async function* fetchPagesBuffered(
     results.delete(i);
     yield { name: nameFor(pages[i]), open: async () => data };
   }
-}
+};
 
 function sanitize(value: string): string {
   return value

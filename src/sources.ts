@@ -6,12 +6,14 @@ import {
   searchTags,
   translateNhQuery,
 } from "./nhentai";
+import { fetchMedia as fetchMediaWithServers, serverOrigin } from "./media";
+import { searchEh, ehGallery, ehTags, ehFetchMedia, ehBrowseTags } from "./ehentai";
 import type { SortOrder } from "./types";
 
 // ---------------------------------------------------------------------------
-// Source-agnostic shapes. Every future source (pixiv, hitomi, ...) implements
-// SourceAdapter and returns these normalized shapes, so the web app never
-// talks to a source directly.
+// Source-agnostic shapes. Every future source implements SourceAdapter and
+// returns these normalized shapes, so the web app never talks to a source
+// directly.
 // ---------------------------------------------------------------------------
 export interface NormalizedThumb {
   path: string;
@@ -27,6 +29,7 @@ export interface NormalizedListItem {
   pages: number;
   favorites: number;
   thumb: NormalizedThumb;
+  variant?: string;
 }
 
 export interface NormalizedSearchResult {
@@ -67,6 +70,7 @@ export interface NormalizedGallery {
   thumbnail: { path: string; width: number; height: number };
   tags: NormalizedTag[];
   pages: NormalizedPage[];
+  variant?: string;
 }
 
 export interface SearchOptions {
@@ -84,6 +88,11 @@ export interface BrowseResult {
   per_page: number;
 }
 
+export interface MediaFetchResult {
+  response: Response;
+  serverHint?: string;
+}
+
 export interface SourceAdapter {
   id: string;
   name: string;
@@ -91,7 +100,7 @@ export interface SourceAdapter {
   gallery(id: string, key?: string): Promise<NormalizedGallery>;
   tags(query: string, limit: number, type?: string): Promise<NormalizedTag[]>;
   browseTags(type: string, page: number, sort?: string): Promise<BrowseResult>;
-  mediaServers(kind: "image" | "thumb"): Promise<string[]>;
+  fetchMedia(path: string, kind: "image" | "thumb", preferredServer?: string): Promise<MediaFetchResult>;
 }
 
 // ---------------------------------------------------------------------------
@@ -127,6 +136,7 @@ const nhAdapter: SourceAdapter = {
           width: r.thumbnail_width,
           height: r.thumbnail_height,
         },
+        variant: "nh",
       })),
       num_pages: data.num_pages,
       per_page: data.per_page,
@@ -147,6 +157,7 @@ const nhAdapter: SourceAdapter = {
       num_favorites: g.num_favorites,
       cover: g.cover,
       thumbnail: g.thumbnail,
+      variant: "nh",
       tags: g.tags.map((t) => ({
         id: t.id,
         type: t.type,
@@ -192,15 +203,55 @@ const nhAdapter: SourceAdapter = {
     };
   },
 
-  async mediaServers(kind) {
+  async fetchMedia(path, kind, preferredServer) {
     const cfg = await getCdnConfig();
-    return kind === "image" ? cfg.image_servers : cfg.thumb_servers;
+    const servers = kind === "image" ? cfg.image_servers : cfg.thumb_servers;
+    const fm = await fetchMediaWithServers(path, servers, {
+      preferredServer,
+      timeoutMs: 12000,
+    });
+    return { response: fm.response, serverHint: serverOrigin(fm.url) };
+  },
+};
+
+// ---------------------------------------------------------------------------
+// e-hentai adapter (exhentai first, falls back to e-hentai)
+// ---------------------------------------------------------------------------
+const ehAdapter: SourceAdapter = {
+  id: "eh",
+  name: "e-hentai",
+
+  async search(opts) {
+    const query = opts.tagName
+      ? String(opts.tagName)
+      : opts.query ?? "";
+    return searchEh({ query, page: opts.page ?? 1 });
+  },
+
+  async gallery(id) {
+    return ehGallery(id);
+  },
+
+  async tags(query, limit) {
+    return ehTags(query, limit);
+  },
+
+  async browseTags(type, page) {
+    return ehBrowseTags(type, page);
+  },
+
+  async fetchMedia(path, kind) {
+    return ehFetchMedia(path, kind);
   },
 };
 
 const registry: Record<string, SourceAdapter> = {
   nh: nhAdapter,
   nhentai: nhAdapter,
+  eh: ehAdapter,
+  ehentai: ehAdapter,
+  "e-hentai": ehAdapter,
+  exhentai: ehAdapter,
 };
 
 export function getSource(name: string): SourceAdapter | undefined {
@@ -208,7 +259,10 @@ export function getSource(name: string): SourceAdapter | undefined {
 }
 
 export function listSources(): Array<{ id: string; name: string }> {
-  return [{ id: "nh", name: "nhentai" }];
+  return [
+    { id: "nh", name: "nhentai" },
+    { id: "eh", name: "e-hentai" },
+  ];
 }
 
 export function buildMediaUrl(source: string, path: string, kind: "image" | "thumb"): string {

@@ -2,7 +2,7 @@
 
 极简聚合漫画搜索网页。所有请求都经过本项目代理（**不直连、不 302**），前端只与本站后端交互，后端按 **source（渠道）** 组织，便于后续扩展更多来源。
 
-当前 source：`nh` = **nhentai**（已迁移到其 `/api/v2`）。
+当前 source：`nh` = **nhentai**（已迁移到其 `/api/v2`）；`eh` = **e-hentai / exhentai**（有 exhentai igneous 时优先 EXH，否则回退 EH）。
 
 ## 功能
 
@@ -70,6 +70,10 @@ vercel
 | `NHENTAI_BASE` | nhentai API 基地址 | `https://nhentai.net` |
 | `NHENTAI_API_KEY` | nhentai User API Key，提高限流（`Authorization: Key ...`），可选 | 无（匿名） |
 | `NHENTAI_USER_AGENT` | 请求 UA，可选。可保持默认，也可配置为 `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36` | `EroEroEro/0.1 (https://github.com/Eternal-Future/EroEroEro)` |
+| `EHENTAI_COOKIE` | e-hentai 基础 Cookie（如 `ipb_member_id=...;ipb_pass_hash=...`），可选；不配则作为游客访问 E-Hentai | 无 |
+| `EHENTAI_IGNEOUS_PROXY` | 获取 exhentai `igneous` 时使用的代理 URL（Node 本地/Docker 有效，带 `user:pass@host:port` 的形式） | 无 |
+| `EHENTAI_IGNEOUS` | 手动指定已获取的 `igneous`，优先级最高；Workers/Vercel 可把 D1/KV 里的值喂到这里 | 无 |
+| `EHENTAI_STATE_FILE` | 本地持久化 igneous 的 JSON 文件路径 | `.data/eh-state.json` |
 
 > 匿名限流参考（单个 IP）：搜索 10/min、详情 20/min、按标签 15/min。图片走 CDN（`i*` / `t*`）无该 API 限流，且失败会自动切换其它 CDN 节点。
 
