@@ -31,6 +31,9 @@
     reader: $("#reader"),
     readerCount: $("#reader-count"),
     readerImg: $("#reader-img"),
+    readerLoading: $("#reader-loading"),
+    readerPreloadText: $("#reader-preload-text"),
+    readerPreloadFill: $("#reader-preload-fill"),
   };
 
   const TAG_TYPES = ["tag", "language", "artist", "character", "parody", "group", "category"];
@@ -54,7 +57,7 @@
     tagName: "",
     page: 1,
     numPages: 1,
-    reader: { id: null, page: 1, pages: [] },
+    reader: { id: null, page: 1, pages: [], token: 0 },
     tags: { type: "tag", page: 1, numPages: 1 },
   };
 
@@ -75,6 +78,14 @@
     if (cls) node.className = cls;
     if (text != null) node.textContent = text;
     return node;
+  }
+
+  function sourceBadge() {
+    const name = state.source === "nh" ? "NH" : state.source.toUpperCase();
+    const label = SOURCES[state.source] || state.source;
+    const badge = el("span", "src-badge", name);
+    badge.title = "此漫画来自于 " + label;
+    return badge;
   }
 
   function status(msg, isErr) {
@@ -195,6 +206,7 @@
       const m = el("div", "card-meta");
       m.append(el("span", null, it.pages + " 页"));
       m.append(el("span", null, "♥ " + fmt(it.favorites)));
+      m.append(sourceBadge());
       body.append(t, m);
       a.append(img, body);
       frag.append(a);
@@ -541,29 +553,62 @@
 
   // ---- reader -------------------------------------------------------------
   function openReader(g, page) {
-    state.reader = { id: g.id, page, pages: g.pages };
+    state.reader = { id: g.id, page, pages: g.pages, token: 0 };
     els.reader.hidden = false;
     document.body.style.overflow = "hidden";
     renderReaderPage();
   }
 
-  async function renderReaderPage() {
+  function renderReaderPage() {
     const r = state.reader;
     const pg = r.pages[r.page - 1];
     if (!pg) return;
     els.readerCount.textContent = `${r.page} / ${r.pages.length}`;
+    const token = ++r.token;
+    setReaderLoading(true);
     const img = new Image();
     img.onload = () => {
+      if (token !== state.reader.token) return;
       els.readerImg.src = pg.img;
+      setReaderLoading(false);
+    };
+    img.onerror = () => {
+      if (token !== state.reader.token) return;
+      setReaderLoading(false);
     };
     img.src = pg.img;
-    if (r.pages[r.page]) preload(r.pages[r.page].img);
-    if (r.pages[r.page - 2]) preload(r.pages[r.page - 2].img);
+    preloadNextPages(token);
   }
 
-  function preload(src) {
-    const img = new Image();
-    img.src = src;
+  function setReaderLoading(loading) {
+    els.readerLoading.hidden = !loading;
+    els.readerImg.style.visibility = loading ? "hidden" : "visible";
+  }
+
+  // Preload the NEXT 5 pages below the current one and show progress on top.
+  function preloadNextPages(token) {
+    const r = state.reader;
+    const targets = [];
+    for (let i = 0; i < 5; i++) {
+      const p = r.pages[r.page + i]; // r.page is 1-based: pages[r.page] is next page
+      if (p) targets.push(p.img);
+      else break;
+    }
+    const total = targets.length;
+    let done = 0;
+    els.readerPreloadText.textContent = total ? `预加载 0/${total}` : "预加载 0/0";
+    els.readerPreloadFill.style.width = "0%";
+    if (!total) return;
+    for (const src of targets) {
+      const img = new Image();
+      img.onload = img.onerror = () => {
+        if (token !== state.reader.token) return;
+        done += 1;
+        els.readerPreloadText.textContent = `预加载 ${done}/${total}`;
+        els.readerPreloadFill.style.width = `${(done / total) * 100}%`;
+      };
+      img.src = src;
+    }
   }
 
   function readerStep(delta) {
@@ -571,16 +616,17 @@
     const next = r.page + delta;
     if (next < 1 || next > r.pages.length) return;
     r.page = next;
-    els.readerImg.style.opacity = "0.4";
     renderReaderPage();
-    setTimeout(() => (els.readerImg.style.opacity = "1"), 30);
   }
 
   function closeReader() {
+    state.reader.token += 1;
     els.reader.hidden = true;
     document.body.style.overflow = "";
     els.readerImg.src = "";
-    state.reader = { id: null, page: 1, pages: [] };
+    els.readerImg.style.visibility = "visible";
+    els.readerLoading.hidden = true;
+    state.reader = { id: null, page: 1, pages: [], token: 0 };
   }
 
   // ---- download: browser-native streamed download (no fixed size) ---------

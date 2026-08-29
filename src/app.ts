@@ -3,6 +3,7 @@ import { index_html, style_css, app_js } from "./assets";
 import { getEnv } from "./env";
 import { NhentaiError } from "./nhentai";
 import { fetchMedia, fetchMediaBuffer, isValidMediaPath, serverOrigin } from "./media";
+import { getCachedImage, imageCacheKey, putCachedImage } from "./imageCache";
 import {
   buildMediaUrl,
   getSource,
@@ -164,16 +165,43 @@ app.get("/api/source/:source/img", async (c) => {
   const kind = c.req.query("kind") === "image" ? "image" : "thumb";
   if (!isValidMediaPath(path)) return c.json({ error: "bad media path" }, 400);
 
-  const servers = await adapter.mediaServers(kind);
-  const { data, contentType } = await fetchMediaBuffer(path, servers);
-  return new Response(data.buffer as ArrayBuffer, {
-    headers: {
-      "Content-Type": contentType,
-      "Content-Length": String(data.byteLength),
-      "Cache-Control": "public, max-age=86400",
-      "X-Content-Type-Options": "nosniff",
-    },
-  });
+  const cacheKey = imageCacheKey(adapter.id, kind, path);
+  let data: Uint8Array;
+  let contentType: string;
+  let cacheHit = true;
+
+  const cached = getCachedImage(cacheKey);
+  if (cached) {
+    data = cached.data;
+    contentType = cached.contentType;
+  } else {
+    cacheHit = false;
+    const servers = await adapter.mediaServers(kind);
+    const fetched = await fetchMediaBuffer(path, servers);
+    data = fetched.data;
+    contentType = fetched.contentType;
+    putCachedImage(cacheKey, data, contentType);
+  }
+
+  // ≤3MB is kept cacheable for browsers and CDN nodes; larger images bypass
+  // shared caches so they don't blow through CDN/browser quota.
+  const cacheable = data.byteLength <= 3 * 1024 * 1024;
+  const etag = `W/"${data.byteLength.toString(36)}-${hashCode(path + kind).toString(36)}"`;
+
+  const headers: Record<string, string> = {
+    "Content-Type": contentType,
+    "Content-Length": String(data.byteLength),
+    "Cache-Control": cacheable
+      ? "public, max-age=86400, s-maxage=86400, stale-while-revalidate=604800"
+      : "no-store",
+    "CDN-Cache-Control": cacheable ? "public, max-age=86400" : "no-cache",
+    "Vercel-CDN-Cache-Control": cacheable ? "public, max-age=86400" : "no-cache",
+    ETag: etag,
+    "X-Cache": cacheHit ? "HIT" : "MISS",
+    "X-Content-Type-Options": "nosniff",
+  };
+
+  return new Response(data.buffer as ArrayBuffer, { headers });
 });
 
 // ---------------------------------------------------------------------------
@@ -319,4 +347,10 @@ function sanitize(value: string): string {
     .replace(/[\\/:*?"<>|]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function hashCode(value: string): number {
+  let h = 0;
+  for (let i = 0; i < value.length; i++) h = (h * 31 + value.charCodeAt(i)) >>> 0;
+  return h;
 }

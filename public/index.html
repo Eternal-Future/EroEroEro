@@ -92,9 +92,16 @@
   <div id="reader" class="reader" hidden>
     <div class="reader-top">
       <span id="reader-count" class="reader-count"></span>
+      <div class="reader-preload">
+        <span id="reader-preload-text">预加载 0/0</span>
+        <div class="reader-preload-bar"><div id="reader-preload-fill"></div></div>
+      </div>
       <button class="btn btn-ghost" data-reader-close>✕ 关闭</button>
     </div>
     <div class="reader-stage">
+      <div id="reader-loading" class="reader-loading" hidden>
+        <div class="reader-spinner"></div>
+      </div>
       <button class="reader-nav reader-prev" data-reader-prev>‹</button>
       <img id="reader-img" class="reader-img" alt="page" />
       <button class="reader-nav reader-next" data-reader-next>›</button>
