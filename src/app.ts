@@ -3,7 +3,7 @@ import { index_html, style_css, app_js, sw_js } from "./assets";
 import { getEnv } from "./env";
 import { debugLog, debugEnabledFlag } from "./debug";
 import { NhentaiError } from "./nhentai";
-import { EhError } from "./ehentai";
+import { EhError, getEhJapaneseTitle } from "./ehentai";
 import { getCachedImage, imageCacheKey, putCachedImage } from "./imageCache";
 import { maybeInitEhStore } from "./ehstore";
 import { aggregateSearch } from "./query";
@@ -127,6 +127,7 @@ app.get("/api/source/:source/search", async (c) => {
   if (query) {
     const scope = requested === "all" ? undefined : [requested];
     const data = await aggregateSearch(query, page, key, scope);
+    await enrichEhTitles(data.items);
     return c.json({
       source: requested,
       items: formatItems(data.items),
@@ -155,6 +156,7 @@ app.get("/api/source/:source/search", async (c) => {
     await mapLimit(nhItems, 5, async (it) => {
       it.published = await getNhPublishDate(it.id, key);
     });
+    await enrichEhTitles(items);
     items.sort((x, y) => (y.published ?? 0) - (x.published ?? 0));
 
     return c.json({
@@ -442,6 +444,19 @@ const fetchPagesBuffered = async function* (
     yield { name: nameFor(pages[i]), open: async () => data };
   }
 };
+
+async function enrichEhTitles(items: Array<any>): Promise<void> {
+  const ehItems = items.filter(
+    (it) => it.variant === "exh" || it.variant === "eh",
+  );
+  await mapLimit(ehItems, 4, async (it) => {
+    const jp = await getEhJapaneseTitle(String(it.id));
+    if (jp) {
+      it.japanese_title = it.title;
+      it.title = jp;
+    }
+  });
+}
 
 async function mapLimit<T, R>(
   items: T[],

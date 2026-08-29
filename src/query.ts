@@ -1,12 +1,10 @@
 import { getSource, type NormalizedListItem, type NormalizedSearchResult } from "./sources";
 import { ehCanonicalTagsFor } from "./ehtags";
 
-type SrcTag = { source: string; value: string };
+type SrcTag = { source: string; value: string; quoted: boolean };
 
 interface Branch {
-  /** All tags with their explicit sources. */
   tags: SrcTag[];
-  /** Leftover words that were not `source:tag` tokens. */
   keywords: string[];
 }
 
@@ -37,8 +35,9 @@ export function parseBranches(raw: string): Branch[] {
       for (const m of part.matchAll(TAG_RE)) {
         const before = part.slice(last, m.index);
         if (before.trim()) leftover.push(before.trim());
+        const quoted = m[2] !== undefined;
         const value = m[2] ?? m[3];
-        tags.push({ source: canonicalSource(m[1]), value });
+        tags.push({ source: canonicalSource(m[1]), value, quoted });
         last = m.index + m[0].length;
       }
       const tail = part.slice(last);
@@ -53,20 +52,32 @@ async function branchItems(
   key: string | undefined,
   defaultSources: string[],
 ): Promise<NormalizedListItem[]> {
+  // Quoted `source:"term"` is a scoped keyword search (good for titles).
+  // Unquoted `source:term` keeps the tag semantics the user described.
   const tagsBySource = new Map<string, string[]>();
+  const keywordScopes = new Map<string, string[]>();
+  const keywords = [...branch.keywords];
+
   for (const t of branch.tags) {
-    const list = tagsBySource.get(t.source) ?? [];
-    list.push(t.value);
-    tagsBySource.set(t.source, list);
+    if (t.quoted) {
+      const list = keywordScopes.get(t.source) ?? [];
+      list.push(t.value);
+      keywordScopes.set(t.source, list);
+    } else {
+      const list = tagsBySource.get(t.source) ?? [];
+      list.push(t.value);
+      tagsBySource.set(t.source, list);
+    }
   }
 
-  const sources = tagsBySource.size ? [...tagsBySource.keys()] : defaultSources;
+  const mentioned = new Set([...tagsBySource.keys(), ...keywordScopes.keys()]);
+  const sources = mentioned.size ? [...mentioned] : defaultSources;
 
   const results = await Promise.all(
     sources.map(async (source) => {
       const adapter = getSource(source);
       if (!adapter) return [];
-      const qParts = [...branch.keywords];
+      const qParts = [...keywords, ...(keywordScopes.get(source) ?? [])];
       for (const rawTag of tagsBySource.get(source) ?? []) {
         if (adapter.id === "eh") {
           const canonical = await ehCanonicalTagsFor(rawTag, 1);
@@ -75,7 +86,8 @@ async function branchItems(
           qParts.push(`tag:"${rawTag.replace(/"/g, "")}"`);
         }
       }
-      const query = qParts.join(" ").trim();
+      const query = qParts.join(" ");
+      if (!query.trim()) return [];
       const res = await adapter.search({ query, page, key });
       return res.items;
     }),

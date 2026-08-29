@@ -310,13 +310,50 @@ async function fetchListPage(
   q: string,
   cursor: string,
 ): Promise<EhListPage> {
-  const cursorPart = cursor ? `&next=${cursor}` : "";
-  const path = `/${q}${cursorPart}`;
+  let path = "/";
+  if (q) path += q;
+  if (cursor) path += (path.includes("?") ? "&" : "?") + `next=${cursor}`;
   let html: string | null = null;
   if (variant === "exh") html = await tryExh(path);
   if (html === null) html = await fetchEh(path);
   const parsed = parseList(html, variant === "exh" && html !== null ? "exh" : "eh");
   return { html, next: parsed.nextCursor, hasNext: parsed.hasNext };
+}
+
+/** Lightweight Japanese title lookup for list views (DB-cached). */
+export async function getEhJapaneseTitle(id: string): Promise<string | null> {
+  await load();
+  const idx = id.lastIndexOf("_");
+  const gid = idx >= 0 ? id.slice(0, idx) : id;
+  const key = `eh_jp_${gid}`;
+  try {
+    const cached = await ehGet(key);
+    if (cached) return cached === "__none__" ? null : cached;
+  } catch {
+    // fall through to network
+  }
+  let html: string | null = null;
+  try {
+    html = await tryExh(`/g/${gid}/${id.slice(idx + 1)}/`);
+    if (html === null) html = await fetchEh(`/g/${gid}/${id.slice(idx + 1)}/`);
+  } catch {
+    html = null;
+  }
+  const jpRaw = html?.match(/<h1 id="gj">([\s\S]*?)<\/h1>/)?.[1] ?? "";
+  const jp = stripTags(jpRaw) || null;
+  try {
+    await ehPut(key, jp ?? "__none__");
+  } catch {
+    // best effort
+  }
+  return jp;
+}
+
+function parseEhRootTitle(html: string, gid: string): { english: string; japanese: string | null } {
+  const titleRaw = html.match(/<h1 id="gn">([\s\S]*?)<\/h1>/)?.[1] ?? "";
+  const english = stripTags(titleRaw) || `#${gid}`;
+  const jpRaw = html.match(/<h1 id="gj">([\s\S]*?)<\/h1>/)?.[1] ?? "";
+  return { english, japanese: stripTags(jpRaw) || null };
 }
 
 export async function ehGallery(id: string): Promise<NormalizedGallery> {

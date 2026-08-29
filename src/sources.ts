@@ -130,8 +130,8 @@ const nhAdapter: SourceAdapter = {
     return {
       items: data.result.map((r) => ({
         id: r.id,
-        title: r.english_title || r.japanese_title || `#${r.id}`,
-        japanese_title: r.japanese_title,
+        title: r.japanese_title || r.english_title || `#${r.id}`,
+        japanese_title: r.japanese_title ? r.english_title : r.japanese_title,
         pages: r.num_pages,
         favorites: r.num_favorites,
         thumb: {
