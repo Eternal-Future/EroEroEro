@@ -529,7 +529,14 @@ function parseCookies(header: string): Record<string, string> {
   for (const part of header.split(";")) {
     const eq = part.indexOf("=");
     if (eq === -1) continue;
-    out[part.slice(0, eq).trim()] = decodeURIComponent(part.slice(eq + 1).trim());
+    const key = part.slice(0, eq).trim();
+    const raw = part.slice(eq + 1).trim();
+    try {
+      out[key] = decodeURIComponent(raw);
+    } catch {
+      // malformed percent-encoding must not 500 the whole request
+      out[key] = raw;
+    }
   }
   return out;
 }

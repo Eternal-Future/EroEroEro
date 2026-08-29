@@ -166,21 +166,30 @@ async function tryExh(path: string): Promise<string | null> {
 
   const url = `https://exhentai.org${path}`;
   debugLog("[eh] tryExh", path);
-  try {
+
+  const fetchExh = async (): Promise<string | null> => {
     const res = await fetch(url, { headers: headersFor("exh") });
     if (res.ok) return await res.text();
-    // e.g. 302 to e-hentai / expired igneous
-    if (res.status === 302 || res.status === 301) return null;
-    throw new EhError(res.status, `exhentai ${path} -> HTTP ${res.status}`);
+    // Any exhentai failure (redirect to e-hentai, denied access, missing
+    // gallery, rate limit, 5xx) should fall back to e-hentai instead of
+    // failing the whole request.
+    debugLog("[eh] tryExh fallback", path, "status", res.status);
+    return null;
+  };
+
+  try {
+    return await fetchExh();
   } catch (err) {
-    if (err instanceof EhError) throw err;
-    // network failure or igneous expired: try to refresh once
+    // network failure or igneous expired: try to refresh once, then fall back
     debugLog("[eh] tryExh failed, refreshing igneous:", err instanceof Error ? err.message : String(err));
     const ig = await acquireIgneous();
-    if (!ig) throw err;
-    const retry = await fetch(url, { headers: headersFor("exh") });
-    if (retry.ok) return await retry.text();
-    throw new EhError(retry.status, `exhentai ${path} -> HTTP ${retry.status}`);
+    if (!ig) return null;
+    try {
+      return await fetchExh();
+    } catch (err2) {
+      debugLog("[eh] tryExh retry failed:", err2 instanceof Error ? err2.message : String(err2));
+      return null;
+    }
   }
 }
 
@@ -240,9 +249,29 @@ interface EhListPage {
 }
 
 // cursor cache so page N doesn't need to re-walk pages 1..N every time.
-// It only remembers the "start cursor" for the highest page we've seen; when
-// the requested page is behind the cache we restart from that fork.
+// It remembers the cursor to fetch page `page + 1`, so forward navigation can
+// resume from the fork instead of restarting at page 1.
+const CURSOR_CACHE_TTL_MS = 5 * 60 * 1000; // 5 min
+const CURSOR_CACHE_MAX = 200;
 const cursorCache = new Map<string, { page: number; next: string; hasNext: boolean; at: number }>();
+
+function readCursorCache(queryKey: string): { page: number; next: string; hasNext: boolean } | undefined {
+  const hit = cursorCache.get(queryKey);
+  if (!hit) return undefined;
+  if (Date.now() - hit.at > CURSOR_CACHE_TTL_MS) {
+    cursorCache.delete(queryKey);
+    return undefined;
+  }
+  return hit;
+}
+
+function writeCursorCache(queryKey: string, page: number, next: string, hasNext: boolean): void {
+  cursorCache.set(queryKey, { page, next, hasNext, at: Date.now() });
+  if (cursorCache.size > CURSOR_CACHE_MAX) {
+    const first = cursorCache.keys().next().value;
+    if (first !== undefined) cursorCache.delete(first);
+  }
+}
 
 async function listPageAt(
   variant: "exh" | "eh",
@@ -251,20 +280,22 @@ async function listPageAt(
   queryKey: string,
 ): Promise<{ page: number; cursor: string; html: string; next: string; hasNext: boolean }> {
   let cursor = "";
-  let html = await fetchListPage(variant, q, "");
   let current = 1;
+  let html: EhListPage;
+
+  // Resume from the fork only when it is strictly before the target page (its
+  // `next` is the cursor for `fork.page + 1`). Otherwise restart from page 1 so
+  // we never return a stale page's HTML for the requested page.
+  const fork = readCursorCache(queryKey);
+  if (fork && fork.page < page && fork.next) {
+    cursor = fork.next;
+    html = await fetchListPage(variant, q, cursor);
+    current = fork.page + 1;
+  } else {
+    html = await fetchListPage(variant, q, "");
+  }
   let next = html.next;
   let hasNext = html.hasNext;
-  let cached = cursorCache.get(queryKey);
-  if (cached) {
-    current = cached.page;
-    next = cached.next;
-    hasNext = cached.hasNext;
-    if (cached.page === page) {
-      // reuse cached html is not stored; just its cursor would need refetch of current page,
-      // so we fall through and walk only when needed.
-    }
-  }
 
   for (;;) {
     if (current === page) {
@@ -279,12 +310,7 @@ async function listPageAt(
     current += 1;
     next = html.next;
     hasNext = html.hasNext;
-    cursorCache.set(queryKey, {
-      page: current,
-      next,
-      hasNext,
-      at: Date.now(),
-    });
+    writeCursorCache(queryKey, current, next, hasNext);
   }
   // best effort: return the deepest page we reached
   return { page: current, cursor, html: html.html, next, hasNext };
@@ -310,10 +336,15 @@ export async function searchEh(opts: {
     "[eh] search",
     JSON.stringify({ query, requestedPage: page, returnedPage: result.page, hasNext: result.hasNext }),
   );
+  const perPage = 25;
+  const approxPages = result.hasNext ? result.page + 1 : result.page;
+  const numPages = parsed.total
+    ? Math.max(1, Math.ceil(parsed.total / perPage))
+    : approxPages;
   return {
     items: parsed.items,
-    num_pages: result.hasNext ? result.page + 1 : result.page,
-    per_page: 25,
+    num_pages: numPages,
+    per_page: perPage,
     total: parsed.total,
   };
 }
