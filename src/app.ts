@@ -151,7 +151,7 @@ app.get("/api/source/:source/search", async (c) => {
 
   // Multi-keyword / OR / cross-source query engine:
   //   space = AND, `&` = OR, quoted tag names supported (`eh:"male only"`).
-  const crossSyntax = /&|(\b(nh|eh|jm|nhentai|ehentai|e-hentai|exhentai|jmcomic|18comic):)/i;
+  const crossSyntax = /&|(\b(nh|eh|jm|bk|nhentai|ehentai|e-hentai|exhentai|jmcomic|18comic|bika|picacg|picacomic):)/i;
   if (query && (requested === "all" || crossSyntax.test(query))) {
     const scope = requested === "all" ? undefined : [requested];
     const data = await aggregateSearch(query, page, key, scope);

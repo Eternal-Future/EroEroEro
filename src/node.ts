@@ -41,6 +41,7 @@ if (proc?.argv?.includes("--debug") || proc?.env?.ERO3_DEBUG === "1") {
 installEhNodeBridge();
 
 const port = Number((globalThis as any).process?.env?.PORT ?? 8787);
+const host = (globalThis as any).process?.env?.HOST ?? "0.0.0.0";
 
-console.log(`[Ero³] listening on http://localhost:${port}${proc?.argv?.includes("--debug") ? " (debug)" : ""}`);
-serve({ fetch: app.fetch, port });
+console.log(`[Ero³] listening on http://${host}:${port}${proc?.argv?.includes("--debug") ? " (debug)" : ""}`);
+serve({ fetch: app.fetch, port, hostname: host });

@@ -83,6 +83,7 @@ vercel
 | 变量 | 说明 | 默认 |
 | --- | --- | --- |
 | `PORT` | 本地/容器端口 | `8787` |
+| `HOST` | 监听 IP | `0.0.0.0` |
 | `ERO_PASSWORD` | 鉴权令牌；不设置则无鉴权 | 无 |
 | `ERO3_DEBUG` | `1` 时打印调试日志（等同于启动参数 `--debug`） | 关闭 |
 | `NHENTAI_BASE` | nhentai API 基地址 | `https://nhentai.net` |

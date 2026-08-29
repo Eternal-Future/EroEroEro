@@ -98,22 +98,21 @@ async function branchItems(
       if (!adapter) return { items: [] as NormalizedListItem[], num_pages: 1 };
       const qParts = [...keywords, ...(keywordScopes.get(source) ?? [])];
       for (const rawTag of positiveTags.get(source) ?? []) {
-        if (adapter.id === "eh") {
+        if (adapter.id === "nh") {
+          qParts.push(`tag:"${rawTag.replace(/"/g, "")}"`);
+        } else if (adapter.id === "eh") {
           const canonical = await ehCanonicalTagsFor(rawTag, 1);
           qParts.push(canonical[0] ?? rawTag);
-        } else if (adapter.id === "jm") {
-          qParts.push(rawTag);
         } else {
-          qParts.push(`tag:"${rawTag.replace(/"/g, "")}"`);
+          // jm / bk / future keyword-only sources keep the plain keyword.
+          qParts.push(rawTag);
         }
       }
       for (const rawNeg of negativeTags.get(source) ?? []) {
         if (adapter.id === "eh") {
           const canonical = await ehCanonicalTagsFor(rawNeg, 1);
           qParts.push(`-${canonical[0] ?? rawNeg}`);
-        } else if (adapter.id === "jm") {
-          // jm does not support tag filters; ignore.
-        } else {
+        } else if (adapter.id === "nh") {
           qParts.push(`-tag:"${rawNeg.replace(/"/g, "")}"`);
         }
       }
