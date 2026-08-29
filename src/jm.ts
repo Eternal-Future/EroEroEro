@@ -197,7 +197,8 @@ function jmSegments(scrambleId: number, aid: number, filename: string): number {
   if (aid < scrambleId) return 0;
   if (aid < 268850) return 10;
   const x = aid < 421926 ? 10 : 8;
-  const md5 = CryptoJS.MD5(`${aid}${filename}`).toString();
+  const stem = filename.replace(/\.[^.]+$/, "");
+  const md5 = CryptoJS.MD5(`${aid}${stem}`).toString();
   const last = md5.charCodeAt(md5.length - 1) % x;
   return last * 2 + 2;
 }
