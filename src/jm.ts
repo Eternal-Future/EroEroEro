@@ -1,8 +1,7 @@
 import CryptoJS from "crypto-js";
 import webpDecode, { init as webpDecInit } from "@jsquash/webp/decode.js";
 import webpEncode, { init as webpEncInit } from "@jsquash/webp/encode.js";
-import webpDecWasm from "@jsquash/webp/codec/dec/webp_dec.wasm";
-import webpEncWasm from "@jsquash/webp/codec/enc/webp_enc.wasm";
+import { webpDecWasmBase64, webpEncWasmBase64 } from "./webp-wasm";
 import { USER_AGENT } from "./env";
 import { debugLog } from "./debug";
 import type {
@@ -203,12 +202,19 @@ function jmSegments(scrambleId: number, aid: number, filename: string): number {
   return last * 2 + 2;
 }
 
+function base64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
 let jmWasmReady: Promise<[unknown, unknown]> | null = null;
 function ensureJmWasm(): Promise<[unknown, unknown]> {
   if (!jmWasmReady) {
     jmWasmReady = Promise.all([
-      webpDecInit({ locateFile: () => webpDecWasm }),
-      webpEncInit({ locateFile: () => webpEncWasm }),
+      webpDecInit({ wasmBinary: base64ToBytes(webpDecWasmBase64) }),
+      webpEncInit({ wasmBinary: base64ToBytes(webpEncWasmBase64) }),
     ]);
   }
   return jmWasmReady;
