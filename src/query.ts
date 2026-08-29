@@ -51,7 +51,7 @@ async function branchItems(
   page: number,
   key: string | undefined,
   defaultSources: string[],
-): Promise<NormalizedListItem[]> {
+): Promise<{ items: NormalizedListItem[]; num_pages: number }> {
   // Quoted `source:"term"` is a scoped keyword search (good for titles).
   // Unquoted `source:term` keeps the tag semantics the user described.
   const tagsBySource = new Map<string, string[]>();
@@ -76,7 +76,7 @@ async function branchItems(
   const results = await Promise.all(
     sources.map(async (source) => {
       const adapter = getSource(source);
-      if (!adapter) return [];
+      if (!adapter) return { items: [] as NormalizedListItem[], num_pages: 1 };
       const qParts = [...keywords, ...(keywordScopes.get(source) ?? [])];
       for (const rawTag of tagsBySource.get(source) ?? []) {
         if (adapter.id === "eh") {
@@ -87,12 +87,14 @@ async function branchItems(
         }
       }
       const query = qParts.join(" ");
-      if (!query.trim()) return [];
+      if (!query.trim()) return { items: [] as NormalizedListItem[], num_pages: 1 };
       const res = await adapter.search({ query, page, key });
-      return res.items;
+      return { items: res.items, num_pages: res.num_pages };
     }),
   );
-  return results.flat();
+  const items = results.flatMap((r) => r.items);
+  const numPages = Math.max(1, ...results.map((r) => r.num_pages));
+  return { items, num_pages: numPages };
 }
 
 function dedupe(items: NormalizedListItem[]): NormalizedListItem[] {
@@ -119,6 +121,7 @@ export async function aggregateSearch(
   const all = await Promise.all(
     branches.map((b) => branchItems(b, page, key, defaultSources)),
   );
-  const items = dedupe(all.flat().slice(0, 50));
-  return { items, num_pages: 1, per_page: 25, total: null };
+  const items = dedupe(all.flatMap((b) => b.items).slice(0, 50));
+  const numPages = Math.max(1, ...all.map((b) => b.num_pages));
+  return { items, num_pages: numPages, per_page: 25, total: null };
 }

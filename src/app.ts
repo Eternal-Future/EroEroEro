@@ -224,7 +224,11 @@ app.get("/api/source/:source/gallery/:id", async (c) => {
       width: p.width,
       height: p.height,
       img: p.path ? buildMediaUrl(adapter.id, p.path, "image") : "",
-      thumb: p.thumbnail ? buildMediaUrl(adapter.id, p.thumbnail, "thumb") : "",
+      thumb: p.thumbnail
+        ? buildMediaUrl(adapter.id, p.thumbnail, "thumb")
+        : p.path
+          ? buildMediaUrl(adapter.id, p.path, "image")
+          : "",
     })),
   });
 });
@@ -333,13 +337,28 @@ app.get("/api/source/:source/download/:id", async (c) => {
     2,
   );
 
-  const ext = (path: string) => path.split(".").pop()?.toLowerCase() || "img";
+  const ext = (path: string) => {
+    const base = path.split("/").pop() ?? "";
+    const dot = base.lastIndexOf(".");
+    const e = dot >= 0 ? base.slice(dot + 1).toLowerCase() : "";
+    return e || "img";
+  };
   const pageName = (p: NormalizedPage) =>
     `${folder}/${String(p.number).padStart(4, "0")}.${ext(p.path)}`;
 
   const fetchPage = async (p: NormalizedPage, preferred?: string) => {
-    const r = await adapter.fetchMedia(p.path, "image", preferred);
-    return { response: r.response, serverHint: r.serverHint };
+    try {
+      const r = await adapter.fetchMedia(p.path, "image", preferred);
+      return { response: r.response, serverHint: r.serverHint };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        response: new Response(
+          `failed to fetch page ${p.number}: ${message}`,
+          { headers: { "Content-Type": "text/plain" } },
+        ),
+      };
+    }
   };
 
   const entries = (async function* () {

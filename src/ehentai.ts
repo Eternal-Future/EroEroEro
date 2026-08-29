@@ -502,13 +502,36 @@ export async function ehFetchMedia(path: string, kind: "image" | "thumb"): Promi
 
   const base = variant === "exh" ? "https://exhentai.org" : "https://e-hentai.org";
   debugLog("[eh] fetch page", base + viewerPath, "->", imgUrl.slice(0, 90));
-  const res = await fetch(imgUrl, {
-    headers: {
-      "User-Agent": USER_AGENT,
-      Referer: base + viewerPath,
-      Cookie: cookieFor(variant),
-    },
-  });
-  if (!res.ok) throw new EhError(res.status, `eh image -> HTTP ${res.status}`);
-  return { response: res };
+
+  const tryImage = async (url: string, refererBase: string, cookieMode: "exh" | "eh") => {
+    let lastErr: unknown = new Error("image fetch failed");
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const res = await fetch(url, {
+          headers: {
+            "User-Agent": USER_AGENT,
+            Referer: refererBase + viewerPath,
+            Cookie: cookieFor(cookieMode),
+          },
+        });
+        if (res.ok) return res;
+        lastErr = new EhError(res.status, `eh image -> HTTP ${res.status}`);
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    throw lastErr;
+  };
+
+  try {
+    return { response: await tryImage(imgUrl, base, variant) };
+  } catch (err) {
+    debugLog("[eh] image failed, trying e-hentai mirror:", err instanceof Error ? err.message : String(err));
+    const mirrorHtml = await fetchEh(viewerPath);
+    const mirrorUrl = mirrorHtml.match(/<img id="img" src="([^"]+)"/)?.[1];
+    if (mirrorUrl && mirrorUrl.startsWith("https://") && mirrorUrl !== imgUrl) {
+      return { response: await tryImage(mirrorUrl, "https://e-hentai.org", "eh") };
+    }
+    throw err;
+  }
 }
