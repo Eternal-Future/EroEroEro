@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { index_html, style_css, app_js } from "./assets";
+import { index_html, style_css, app_js, sw_js } from "./assets";
 import { getEnv } from "./env";
 import { NhentaiError } from "./nhentai";
 import { fetchMedia, fetchMediaBuffer, isValidMediaPath, serverOrigin } from "./media";
@@ -43,6 +43,9 @@ app.get("/style.css", (c) =>
 );
 app.get("/app.js", (c) =>
   c.body(app_js, { headers: { "Content-Type": "text/javascript; charset=utf-8" } }),
+);
+app.get("/sw.js", (c) =>
+  c.body(sw_js, { headers: { "Content-Type": "text/javascript; charset=utf-8" } }),
 );
 
 // ---------------------------------------------------------------------------

@@ -796,6 +796,9 @@
   // ---- boot ---------------------------------------------------------------
   applyTheme(state.theme);
   bind();
+  try {
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");
+  } catch (_) {}
 
   const route = hashToRoute();
   if (route.view === "detail") openDetail(route.source, route.id, { push: false });
