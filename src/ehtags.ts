@@ -88,14 +88,43 @@ async function refreshIfStale(now: number): Promise<void> {
   }
 }
 
+/** Common aliases users type that do not match the DB's localized names. */
+const ALIASES: Record<string, string[]> = {
+  中文翻译: ["translated"],
+  翻译: ["translated"],
+  中文: ["chinese"],
+  汉化: ["translated", "chinese"],
+  英文: ["english"],
+  日文: ["japanese"],
+};
+
+function aliasTargets(raw: string): string[] {
+  const q = raw.trim().toLowerCase();
+  let matches = Object.entries(ALIASES).filter(([alias]) => q.includes(alias));
+  matches.sort((a, b) => b[0].length - a[0].length);
+  if (!matches.length) return [];
+  const longest = matches[0][0].length;
+  matches = matches.filter(([alias]) => alias.length === longest);
+  return [...new Set(matches.flatMap(([, targets]) => targets))];
+}
+
+function queryVariants(raw: string): string[] {
+  const q = raw.trim().toLowerCase();
+  return [...new Set([q, ...aliasTargets(q)])];
+}
+
 export async function suggestEhTags(query: string, limit = 5): Promise<NormalizedTag[]> {
-  const q = query.trim().toLowerCase();
-  if (!q) return [];
+  if (!query.trim()) return [];
   const now = Date.now();
   const tags = await loadTags();
   void refreshIfStale(now);
+  const variants = queryVariants(query);
   return tags
-    .filter((t) => t.key.toLowerCase().includes(q) || t.name.toLowerCase().includes(q))
+    .filter((t) =>
+      variants.some(
+        (v) => t.key.toLowerCase().includes(v) || t.name.toLowerCase().includes(v),
+      ),
+    )
     .slice(0, limit)
     .map((t) => ({
       id: `${t.namespace}:${t.key}`,
@@ -114,6 +143,24 @@ export async function ehKeysForLocalizedQuery(query: string, limit = 6): Promise
     .filter((t) => t.name.toLowerCase().includes(q))
     .slice(0, limit)
     .map((t) => t.key);
+}
+
+/** Resolve a human-typed tag (canonical key or localized name) to `namespace:key`. */
+export async function ehCanonicalTagsFor(input: string, limit = 3): Promise<string[]> {
+  if (!input.trim()) return [];
+  const tags = await loadTags();
+  const variants = queryVariants(input);
+  const exact = tags.filter((t) =>
+    variants.some((v) => t.key.toLowerCase() === v || t.name.toLowerCase() === v),
+  );
+  const prefix = tags.filter((t) =>
+    variants.some(
+      (v) => t.key.toLowerCase().startsWith(v) || t.name.toLowerCase().startsWith(v),
+    ),
+  );
+  return [...exact, ...prefix]
+    .slice(0, limit)
+    .map((t) => `${t.namespace}:${t.key}`);
 }
 
 export async function refreshEhTagsNow(): Promise<void> {

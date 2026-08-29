@@ -19,6 +19,7 @@
     dCover: $("#d-cover"),
     dTitle: $("#d-title"),
     dJp: $("#d-jp"),
+    dSourceBadge: $("#d-source-badge"),
     dMeta: $("#d-meta"),
     dTags: $("#d-tags"),
     dPages: $("#d-pages"),
@@ -315,6 +316,15 @@
     runSearch(1);
   }
 
+  function goHome() {
+    state.source = "all";
+    state.tagId = null;
+    state.tagName = "";
+    state.query = "";
+    els.q.value = "";
+    runSearch(1);
+  }
+
   // ---- tag syntax suggestions: <channel>:<partial> --------------------------
   let tagSuggestTimer = null;
   let tagSuggestIndex = -1;
@@ -421,12 +431,16 @@
         img.alt = "";
         const body = el("div", "pv-body");
         body.append(el("div", "pv-title", it.title));
-        body.append(el("div", "pv-meta", `${it.pages} 页 · ♥ ${fmt(it.favorites)}`));
+        const meta = el("div", "pv-meta");
+        meta.textContent = `${it.pages} 页 · ♥ ${fmt(it.favorites)}`;
+        meta.append(" ");
+        meta.append(sourceBadge(it.variant || it.source));
+        body.append(meta);
         row.append(img, body);
         row.addEventListener("mousedown", (e) => {
           e.preventDefault();
           closeSearchPreview();
-          location.hash = `#/g/${state.source}/${it.id}`;
+          location.hash = `#/g/${it.source || state.source}/${it.id}`;
         });
         els.searchPreview.append(row);
       }
@@ -560,6 +574,8 @@
     els.dCover.className = "cover skeleton";
     els.dCover.src = g.cover;
     els.dTitle.textContent = g.title;
+    els.dSourceBadge.innerHTML = "";
+    els.dSourceBadge.append(sourceBadge(g.variant || g.source));
     els.dJp.textContent = g.japanese_title || "";
     els.dMeta.textContent = [
       g.num_pages + " 页",
@@ -754,7 +770,7 @@
     els.themeToggle.addEventListener("click", cycleTheme);
     $("[data-home]").addEventListener("click", () => {
       location.hash = "#/";
-      clearFilter();
+      goHome();
     });
     $("[data-back]").addEventListener("click", () => {
       if (!els.grid.children.length) runSearch(1);

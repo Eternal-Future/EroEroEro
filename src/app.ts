@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { index_html, style_css, app_js, sw_js } from "./assets";
 import { getEnv } from "./env";
+import { debugLog, debugEnabledFlag } from "./debug";
 import { NhentaiError } from "./nhentai";
 import { EhError } from "./ehentai";
 import { getCachedImage, imageCacheKey, putCachedImage } from "./imageCache";
@@ -15,6 +16,15 @@ import {
 import { zipStream } from "./zip";
 
 export const app = new Hono();
+
+// Request log for --debug / ERO3_DEBUG mode.
+app.use("*", async (c, next) => {
+  const started = Date.now();
+  await next();
+  if (debugEnabledFlag()) {
+    debugLog("req", c.req.method, c.req.path, `status=${c.res.status}`, `${Date.now() - started}ms`);
+  }
+});
 
 // Only images are meant to be cached by browsers/CDN nodes. Everything else
 // (HTML/JS/CSS/JSON/ZIP) defaults to no-store so CDNs never cache it. The

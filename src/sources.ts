@@ -9,7 +9,7 @@ import {
 } from "./nhentai";
 import { fetchMedia as fetchMediaWithServers, serverOrigin } from "./media";
 import { searchEh, ehGallery, ehFetchMedia, ehBrowseTags } from "./ehentai";
-import { suggestEhTags, ehKeysForLocalizedQuery } from "./ehtags";
+import { suggestEhTags, ehKeysForLocalizedQuery, ehCanonicalTagsFor } from "./ehtags";
 import type { SortOrder } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -242,9 +242,14 @@ const ehAdapter: SourceAdapter = {
   name: "e-hentai",
 
   async search(opts) {
-    const query = opts.tagName
-      ? String(opts.tagName)
-      : opts.query ?? "";
+    let query = opts.query ?? "";
+    if (opts.tagId) {
+      // canonical id like "language:chinese" or "male:yaoi"
+      query = String(opts.tagId);
+    } else if (opts.tagName) {
+      const canonical = await ehCanonicalTagsFor(String(opts.tagName), 1);
+      query = canonical[0] ?? String(opts.tagName);
+    }
     return searchEh({ query, page: opts.page ?? 1 });
   },
 

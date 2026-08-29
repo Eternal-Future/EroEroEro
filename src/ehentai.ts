@@ -181,6 +181,7 @@ function parseList(html: string, variant: "exh" | "eh"): {
   items: NormalizedListItem[];
   nextCursor: string;
   total: number | null;
+  hasNext: boolean;
 } {
   const totalM = html.match(/Found (?:about )?([0-9,]+) results/);
   const total = totalM ? Number(totalM[1].replace(/,/g, "")) : null;
@@ -212,29 +213,64 @@ function parseList(html: string, variant: "exh" | "eh"): {
       variant,
     });
   }
-  return { items, nextCursor, total };
+  return { items, nextCursor, total, hasNext: Boolean(nextCursor) };
 }
 
-// small per-query cursor cache for the pagination chain
-const cursorCache = new Map<string, { page: number; next: string; at: number }>();
+interface EhListPage {
+  html: string;
+  next: string;
+  hasNext: boolean;
+}
 
-async function resolveCursor(
-  key: string,
+// cursor cache so page N doesn't need to re-walk pages 1..N every time.
+// It only remembers the "start cursor" for the highest page we've seen; when
+// the requested page is behind the cache we restart from that fork.
+const cursorCache = new Map<string, { page: number; next: string; hasNext: boolean; at: number }>();
+
+async function listPageAt(
+  variant: "exh" | "eh",
+  q: string,
   page: number,
-  fetchPage: (cursor: string) => Promise<{ next: string }>,
-): Promise<string> {
-  if (page <= 1) return "";
-  const now = Date.now();
-  let entry = cursorCache.get(key);
-  if (!entry || now - entry.at > 10 * 60 * 1000) {
-    entry = { page: 1, next: "", at: now };
+  queryKey: string,
+): Promise<{ page: number; cursor: string; html: string; next: string; hasNext: boolean }> {
+  let cursor = "";
+  let html = await fetchListPage(variant, q, "");
+  let current = 1;
+  let next = html.next;
+  let hasNext = html.hasNext;
+  let cached = cursorCache.get(queryKey);
+  if (cached) {
+    current = cached.page;
+    next = cached.next;
+    hasNext = cached.hasNext;
+    if (cached.page === page) {
+      // reuse cached html is not stored; just its cursor would need refetch of current page,
+      // so we fall through and walk only when needed.
+    }
   }
-  while (entry.page < page) {
-    const r = await fetchPage(entry.next);
-    entry = { page: entry.page + 1, next: r.next, at: Date.now() };
+
+  for (;;) {
+    if (current === page) {
+      return { page: current, cursor, html: html.html, next, hasNext };
+    }
+    if (!hasNext || !next) {
+      // Reached (or exceeded) the last page. Return the last page we can reach.
+      break;
+    }
+    cursor = next;
+    html = await fetchListPage(variant, q, cursor);
+    current += 1;
+    next = html.next;
+    hasNext = html.hasNext;
+    cursorCache.set(queryKey, {
+      page: current,
+      next,
+      hasNext,
+      at: Date.now(),
+    });
   }
-  cursorCache.set(key, entry);
-  return entry.next;
+  // best effort: return the deepest page we reached
+  return { page: current, cursor, html: html.html, next, hasNext };
 }
 
 export async function searchEh(opts: {
@@ -251,24 +287,15 @@ export async function searchEh(opts: {
   const exhPage = await tryExh("/");
   if (exhPage !== null) variant = "exh";
 
-  const fetchList = async (cursorBase: string): Promise<{ html: string; next: string }> => {
-    const list = await fetchListPage(variant, q, cursorBase);
-    return list;
-  };
-
-  const cursor = await resolveCursor(key, page, async (cursorBase) => {
-    const { next } = await fetchList(cursorBase);
-    return { next };
-  });
-
-  let html: string;
-  const { html: listHtml } = await fetchList(cursor);
-  html = listHtml;
-
-  const parsed = parseList(html, variant);
+  const result = await listPageAt(variant, q, page, key);
+  const parsed = parseList(result.html, variant);
+  debugLog(
+    "[eh] search",
+    JSON.stringify({ query, requestedPage: page, returnedPage: result.page, hasNext: result.hasNext }),
+  );
   return {
     items: parsed.items,
-    num_pages: 1000, // e-hentai cursor pagination has no fixed page count; frontend needs a value
+    num_pages: result.hasNext ? result.page + 1 : result.page,
     per_page: 25,
     total: parsed.total,
   };
@@ -278,14 +305,14 @@ async function fetchListPage(
   variant: "exh" | "eh",
   q: string,
   cursor: string,
-): Promise<{ html: string; next: string }> {
+): Promise<EhListPage> {
   const cursorPart = cursor ? `&next=${cursor}` : "";
   const path = `/${q}${cursorPart}`;
   let html: string | null = null;
   if (variant === "exh") html = await tryExh(path);
   if (html === null) html = await fetchEh(path);
   const parsed = parseList(html, variant === "exh" && html !== null ? "exh" : "eh");
-  return { html, next: parsed.nextCursor };
+  return { html, next: parsed.nextCursor, hasNext: parsed.hasNext };
 }
 
 export async function ehGallery(id: string): Promise<NormalizedGallery> {
