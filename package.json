@@ -6,7 +6,7 @@
   "description": "Ero³ — minimal aggregator comic search/proxy app. Sources: nhentai (nh), e-hentai/exhentai (eh).",
   "scripts": {
     "build:assets": "node scripts/build-assets.mjs",
-    "build": "node scripts/build-assets.mjs && esbuild src/node.ts --bundle --platform=node --format=esm --target=node20 --external:undici --outfile=dist/server.mjs",
+    "build": "node scripts/build-assets.mjs && esbuild src/node.ts --bundle --platform=node --format=esm --target=node20 --external:undici --loader:.wasm=dataurl --outfile=dist/server.mjs",
     "typecheck": "tsc --noEmit",
     "dev": "node scripts/build-assets.mjs && tsx src/node.ts",
     "start": "node dist/server.mjs",
@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.14.0",
+    "@jsquash/webp": "^1.5.0",
     "crypto-js": "^4.2.0",
     "hono": "^4.7.0",
     "undici": "^5.29.0"

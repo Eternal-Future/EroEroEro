@@ -382,7 +382,7 @@
     scheduleSearchPreview(v);
 
     const m = v.match(/^([A-Za-z0-9]+):(.*)$/);
-    if (m && m[1] && m[2].length >= 1 && SOURCES[m[1]]) {
+    if (m && m[1] && m[2].length >= 1 && SOURCES[m[1]] && m[1] !== "jm") {
       clearTimeout(tagSuggestTimer);
       tagSuggestTimer = setTimeout(() => fetchTagSuggest(m[1], m[2]), 180);
     } else {
@@ -450,7 +450,7 @@
     closeSearchPreview();
     if (!v || !v.trim() || v.length < 2 || /^tag:/.test(v)) return;
     const channelMatch = v.match(/^([A-Za-z0-9]+):/);
-    if (channelMatch && SOURCES[channelMatch[1]]) return; // tag suggestion territory
+    if (channelMatch && SOURCES[channelMatch[1]] && channelMatch[1] !== "jm") return; // tag suggestion territory
     clearTimeout(previewTimer);
     previewTimer = setTimeout(async () => {
       try {
@@ -793,8 +793,19 @@
       const v = els.q.value.trim();
       const single = v.match(/^([A-Za-z0-9]+):([^\s&"]+)$/);
       // "<channel>:<tag>" with no spaces/quotes/& -> search that single tag by name.
-      if (single && SOURCES[single[1]]) {
+      if (single && SOURCES[single[1]] && single[1] !== "jm") {
         selectTagByName(single[2], single[1]);
+        return;
+      }
+      // jm has no tag suggestions: channel prefix means keyword search in jm.
+      if (single && single[1] === "jm") {
+        state.source = "jm";
+        state.tagId = null;
+        state.tagName = "";
+        state.query = single[2];
+        els.q.value = single[2];
+        history.replaceState(null, "", "#/");
+        runSearch(1);
         return;
       }
       state.query = v;

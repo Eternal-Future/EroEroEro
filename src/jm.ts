@@ -1,4 +1,8 @@
 import CryptoJS from "crypto-js";
+import webpDecode, { init as webpDecInit } from "@jsquash/webp/decode.js";
+import webpEncode, { init as webpEncInit } from "@jsquash/webp/encode.js";
+import webpDecWasm from "@jsquash/webp/codec/dec/webp_dec.wasm";
+import webpEncWasm from "@jsquash/webp/codec/enc/webp_enc.wasm";
 import { USER_AGENT } from "./env";
 import { debugLog } from "./debug";
 import type {
@@ -113,16 +117,21 @@ export async function jmSearch(opts: {
 export async function jmGallery(id: string): Promise<NormalizedGallery> {
   const payload = await jmFetchDecrypted(`/comic_read?id=${encodeURIComponent(id)}&lang=TW`);
   const name = payload.name || `#${id}`;
+  const scrambleId = String(payload.scramble_id ?? "");
   const images = Array.isArray(payload.images) ? payload.images : [];
-  const pages = images.map((img: any, idx: number) => ({
-    number: typeof img.page === "number" ? img.page : idx + 1,
-    path: String(img.image ?? ""),
-    width: 0,
-    height: 0,
-    thumbnail: String(img.image ?? ""),
-    thumbnail_width: 0,
-    thumbnail_height: 0,
-  }));
+  const pages = images.map((img: any, idx: number) => {
+    const base = String(img.image ?? "");
+    const url = base && scrambleId ? `${base}${base.includes("?") ? "&" : "?"}scramble_id=${encodeURIComponent(scrambleId)}` : base;
+    return {
+      number: typeof img.page === "number" ? img.page : idx + 1,
+      path: url,
+      width: 0,
+      height: 0,
+      thumbnail: url,
+      thumbnail_width: 0,
+      thumbnail_height: 0,
+    };
+  });
 
   return {
     id,
@@ -153,7 +162,75 @@ export async function jmFetchMedia(
     headers: { "user-agent": USER_AGENT, referer: "http://localhost" },
   });
   if (!res.ok) throw new Error(`jm media -> HTTP ${res.status}`);
-  return { response: res };
+
+  try {
+    const url = new URL(path);
+    const scrambleId = url.searchParams.get("scramble_id");
+    if (!scrambleId) return { response: res };
+
+    const seg = url.pathname.split("/").filter(Boolean);
+    const filename = seg[seg.length - 1] ?? "";
+    const aid = seg.length >= 2 ? seg[seg.length - 2] : "";
+    const num = jmSegments(Number(scrambleId) || 0, Number(aid) || 0, filename);
+    if (num === 0) return { response: res };
+
+    const buffer = await res.arrayBuffer();
+    await ensureJmWasm();
+    const decoded = await webpDecode(buffer);
+    const reordered = reorderRgba(decoded, num);
+    const encoded = await webpEncode(reordered, { quality: 90 });
+    return {
+      response: new Response(new Uint8Array(encoded).buffer as ArrayBuffer, {
+        headers: {
+          "Content-Type": res.headers.get("content-type") || "image/webp",
+          "Content-Length": String(encoded.byteLength),
+        },
+      }),
+    };
+  } catch (err) {
+    debugLog("[jm] reorder skipped", err instanceof Error ? err.message : String(err));
+    return { response: res };
+  }
+}
+
+function jmSegments(scrambleId: number, aid: number, filename: string): number {
+  if (aid < scrambleId) return 0;
+  if (aid < 268850) return 10;
+  const x = aid < 421926 ? 10 : 8;
+  const md5 = CryptoJS.MD5(`${aid}${filename}`).toString();
+  const last = md5.charCodeAt(md5.length - 1) % x;
+  return last * 2 + 2;
+}
+
+let jmWasmReady: Promise<[unknown, unknown]> | null = null;
+function ensureJmWasm(): Promise<[unknown, unknown]> {
+  if (!jmWasmReady) {
+    jmWasmReady = Promise.all([
+      webpDecInit({ locateFile: () => webpDecWasm }),
+      webpEncInit({ locateFile: () => webpEncWasm }),
+    ]);
+  }
+  return jmWasmReady;
+}
+
+function reorderRgba(img: ImageData, num: number): ImageData {
+  const w = img.width;
+  const h = img.height;
+  const src = new Uint8ClampedArray(img.data);
+  const dst = new Uint8ClampedArray(w * h * 4);
+  const rowBytes = w * 4;
+  const over = h % num;
+
+  for (let i = 0; i < num; i++) {
+    const move = Math.floor(h / num);
+    const ySrc = h - move * (i + 1) - over;
+    const yDst = move * i + (i === 0 ? 0 : over);
+    const segH = i === 0 ? move + over : move;
+    src.subarray(ySrc * rowBytes, (ySrc + segH) * rowBytes).forEach((v, k) => {
+      dst[yDst * rowBytes + k] = v;
+    });
+  }
+  return new ImageData(dst, w, h);
 }
 
 export async function jmTags(_query: string, _limit: number): Promise<NormalizedTag[]> {
