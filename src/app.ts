@@ -28,6 +28,22 @@ app.use("*", async (c, next) => {
   }
 });
 
+// Auth (only when ERO_PASSWORD is set). Browser <img> tags cannot set an
+// Authorization header, so the same token is accepted via the ero3_token
+// cookie as a transport fallback.
+app.use("*", async (c, next) => {
+  const pass = getEnv(c, "ERO_PASSWORD");
+  if (pass && c.req.path.startsWith("/api/") && c.req.path !== "/api/auth/status") {
+    const authHeader = c.req.header("Authorization") ?? "";
+    const bearer = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : authHeader;
+    const cookieToken = parseCookies(c.req.header("Cookie") ?? "")["ero3_token"] ?? "";
+    if (bearer !== pass && cookieToken !== pass) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+  }
+  await next();
+});
+
 // Only images are meant to be cached by browsers/CDN nodes. Everything else
 // (HTML/JS/CSS/JSON/ZIP) defaults to no-store so CDNs never cache it. The
 // `/img` route sets its own cache headers and is skipped below because it
@@ -98,6 +114,10 @@ app.get("/api/health", (c) =>
 );
 
 app.get("/api/sources", (c) => c.json({ sources: listSources() }));
+
+app.get("/api/auth/status", (c) =>
+  c.json({ protected: Boolean(getEnv(c, "ERO_PASSWORD")) }),
+);
 
 // ---------------------------------------------------------------------------
 // Search (keyword, tag, or home feed)
@@ -501,6 +521,16 @@ function sanitize(value: string): string {
     .replace(/[\\/:*?"<>|]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function parseCookies(header: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const part of header.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq === -1) continue;
+    out[part.slice(0, eq).trim()] = decodeURIComponent(part.slice(eq + 1).trim());
+  }
+  return out;
 }
 
 function hashCode(value: string): number {

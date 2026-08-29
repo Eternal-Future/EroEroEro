@@ -92,6 +92,17 @@
     </div>
   </div>
 
+  <!-- 鉴权弹窗 -->
+  <div id="auth-overlay" class="auth-overlay" hidden>
+    <form id="auth-form" class="auth-card" autocomplete="off">
+      <h2>需要令牌</h2>
+      <p class="auth-hint">输入 ERO_PASSWORD 令牌后继续</p>
+      <input id="auth-token" class="input auth-input" type="password" placeholder="令牌" />
+      <button class="btn btn-primary" type="submit">进入</button>
+      <div id="auth-error" class="auth-error"></div>
+    </form>
+  </div>
+
   <!-- 阅读器 -->
   <div id="reader" class="reader" hidden>
     <div class="reader-top">

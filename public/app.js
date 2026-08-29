@@ -36,6 +36,10 @@
     readerPreloadText: $("#reader-preload-text"),
     readerPreloadFill: $("#reader-preload-fill"),
     themeToggle: $("#theme-toggle"),
+    authOverlay: $("#auth-overlay"),
+    authForm: $("#auth-form"),
+    authToken: $("#auth-token"),
+    authError: $("#auth-error"),
   };
 
   const TAG_TYPES = ["tag", "language", "artist", "character", "parody", "group", "category"];
@@ -135,8 +139,46 @@
     window.scrollTo({ top: 0 });
   }
 
+  // ---- auth ---------------------------------------------------------------
+  const TOKEN_KEY = "ero3_token";
+  let authToken = localStorage.getItem(TOKEN_KEY) || "";
+
+  function applyAuthCookie() {
+    if (authToken) {
+      document.cookie = `ero3_token=${encodeURIComponent(authToken)}; path=/; samesite=lax`;
+    }
+  }
+
+  function setAuthToken(token) {
+    authToken = token;
+    try {
+      localStorage.setItem(TOKEN_KEY, token);
+    } catch (_) {}
+    applyAuthCookie();
+  }
+
+  function showAuthOverlay() {
+    els.authOverlay.hidden = false;
+    els.authError.textContent = "";
+    setTimeout(() => els.authToken.focus(), 50);
+  }
+
+  function hideAuthOverlay() {
+    els.authOverlay.hidden = true;
+  }
+
   async function api(url, opts) {
-    const res = await fetch(url, opts);
+    const init = opts || {};
+    if (authToken) {
+      init.headers = Object.assign({}, init.headers, {
+        Authorization: `Bearer ${authToken}`,
+      });
+    }
+    const res = await fetch(url, init);
+    if (res.status === 403) {
+      showAuthOverlay();
+      throw new Error("需要令牌");
+    }
     if (!res.ok) {
       let msg = "HTTP " + res.status;
       try {
@@ -769,6 +811,21 @@
 
     $("[data-clear-filter]").addEventListener("click", clearFilter);
     els.themeToggle.addEventListener("click", cycleTheme);
+    els.authForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const token = els.authToken.value.trim();
+      if (!token) return;
+      const res = await fetch("/api/health", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        setAuthToken(token);
+        hideAuthOverlay();
+        startRoute();
+      } else {
+        els.authError.textContent = "令牌无效";
+      }
+    });
     $("[data-home]").addEventListener("click", () => {
       location.hash = "#/";
       goHome();
@@ -823,13 +880,40 @@
   }
 
   // ---- boot ---------------------------------------------------------------
+  function startRoute() {
+    const route = hashToRoute();
+    if (route.view === "detail") openDetail(route.source, route.id, { push: false });
+    else runSearch(1);
+  }
+
+  async function requireAuth() {
+    applyAuthCookie();
+    try {
+      const status = await fetch("/api/auth/status");
+      const info = await status.json();
+      if (!info.protected) return false;
+    } catch (_) {
+      return false;
+    }
+    if (authToken) {
+      try {
+        const probe = await fetch("/api/health", {
+          headers: { Authorization: `Bearer ${authToken}` },
+        });
+        if (probe.ok) return false;
+      } catch (_) {}
+    }
+    showAuthOverlay();
+    return true;
+  }
+
   applyTheme(state.theme);
   bind();
   try {
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");
   } catch (_) {}
 
-  const route = hashToRoute();
-  if (route.view === "detail") openDetail(route.source, route.id, { push: false });
-  else runSearch(1);
+  requireAuth().then((guarded) => {
+    if (!guarded) startRoute();
+  });
 })();

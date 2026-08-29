@@ -514,6 +514,34 @@ a { color: inherit; }
 }
 .overlay-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 
+/* 鉴权 */
+.auth-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+.auth-card {
+  width: min(360px, calc(100% - 32px));
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  padding: 24px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.auth-card h2 { margin: 0; font-size: 19px; }
+.auth-hint { margin: 0; color: var(--muted); font-size: 13px; }
+.auth-input { width: 100%; }
+.auth-error { color: #dc2626; font-size: 13px; min-height: 1em; }
+
 /* 骨架 */
 .skeleton {
   background: linear-gradient(90deg, var(--line) 25%, color-mix(in srgb, var(--panel) 40%, var(--line)) 37%, var(--line) 63%);
