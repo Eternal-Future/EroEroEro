@@ -3,7 +3,7 @@ import { index_html, style_css, app_js, sw_js } from "./assets";
 import { getEnv } from "./env";
 import { debugLog, debugEnabledFlag } from "./debug";
 import { NhentaiError } from "./nhentai";
-import { EhError, getEhJapaneseTitle } from "./ehentai";
+import { EhError, getEhJapaneseTitle, setEhRequestEnv } from "./ehentai";
 import { getCachedImage, imageCacheKey, putCachedImage } from "./imageCache";
 import { maybeInitEhStore } from "./ehstore";
 import { aggregateSearch } from "./query";
@@ -50,6 +50,7 @@ app.use("*", async (c, next) => {
 // always provides a Cache-Control header.
 app.use("*", async (c, next) => {
   await maybeInitEhStore(c.env);
+  setEhRequestEnv(c.env as Record<string, unknown> | null | undefined);
   await next();
   if (!c.res.headers.has("Cache-Control")) {
     c.res.headers.set("Cache-Control", "no-store");

@@ -26,6 +26,7 @@ let acquireFetcher: AcquireFetcher | null = null;
 let persistBridge: PersistBridge | null = null;
 let memoryState: EhPersistState | null = null;
 let loaded = false;
+let requestEnv: Record<string, string> | null = null;
 
 export function setEhAcquireFetcher(fn: AcquireFetcher): void {
   acquireFetcher = fn;
@@ -35,7 +36,18 @@ export function setEhPersistBridge(bridge: PersistBridge): void {
   persistBridge = bridge;
 }
 
+/** Bind Worker/Edge env (c.env) for this request/isolate. Node uses process.env. */
+export function setEhRequestEnv(env: Record<string, unknown> | null | undefined): void {
+  if (!env) return;
+  const copy: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (typeof v === "string") copy[k] = v;
+  }
+  requestEnv = copy;
+}
+
 function env(name: string): string | undefined {
+  if (requestEnv && requestEnv[name] !== undefined) return requestEnv[name];
   const g = globalThis as any;
   return g.process?.env?.[name] ?? g[name];
 }
@@ -111,6 +123,13 @@ function cookieFor(mode: "exh" | "eh"): string {
   return parts.join("; ");
 }
 
+function headersFor(mode: "exh" | "eh", extra: Record<string, string> = {}): Record<string, string> {
+  const h: Record<string, string> = { "User-Agent": USER_AGENT, ...extra };
+  const cookie = cookieFor(mode);
+  if (cookie) h["Cookie"] = cookie;
+  return h;
+}
+
 async function acquireIgneous(): Promise<string | null> {
   const cookie = baseCookie();
   if (!cookie) {
@@ -148,9 +167,7 @@ async function tryExh(path: string): Promise<string | null> {
   const url = `https://exhentai.org${path}`;
   debugLog("[eh] tryExh", path);
   try {
-    const res = await fetch(url, {
-      headers: { "User-Agent": USER_AGENT, Cookie: cookieFor("exh") },
-    });
+    const res = await fetch(url, { headers: headersFor("exh") });
     if (res.ok) return await res.text();
     // e.g. 302 to e-hentai / expired igneous
     if (res.status === 302 || res.status === 301) return null;
@@ -161,18 +178,14 @@ async function tryExh(path: string): Promise<string | null> {
     debugLog("[eh] tryExh failed, refreshing igneous:", err instanceof Error ? err.message : String(err));
     const ig = await acquireIgneous();
     if (!ig) throw err;
-    const retry = await fetch(url, {
-      headers: { "User-Agent": USER_AGENT, Cookie: cookieFor("exh") },
-    });
+    const retry = await fetch(url, { headers: headersFor("exh") });
     if (retry.ok) return await retry.text();
     throw new EhError(retry.status, `exhentai ${path} -> HTTP ${retry.status}`);
   }
 }
 
 async function fetchEh(path: string): Promise<string> {
-  const res = await fetch(`https://e-hentai.org${path}`, {
-    headers: { "User-Agent": USER_AGENT, Cookie: cookieFor("eh") },
-  });
+  const res = await fetch(`https://e-hentai.org${path}`, { headers: headersFor("eh") });
   if (!res.ok) throw new EhError(res.status, `e-hentai ${path} -> HTTP ${res.status}`);
   return res.text();
 }
@@ -472,12 +485,9 @@ export async function ehFetchMedia(path: string, kind: "image" | "thumb"): Promi
     if (!path.startsWith("https://")) throw new EhError(400, `bad eh thumb path`);
     const referer = memoryState?.igneous ? "https://exhentai.org/" : "https://e-hentai.org/";
     debugLog("[eh] fetch thumb", path.slice(0, 80));
+    const mode = memoryState?.igneous && path.includes("exhentai") ? "exh" : "eh";
     const res = await fetch(path, {
-      headers: {
-        "User-Agent": USER_AGENT,
-        Referer: referer,
-        Cookie: cookieFor(memoryState?.igneous && path.includes("exhentai") ? "exh" : "eh"),
-      },
+      headers: headersFor(mode, { Referer: referer }),
     });
     if (!res.ok) throw new EhError(res.status, `eh thumb -> HTTP ${res.status}`);
     return { response: res };
@@ -508,11 +518,7 @@ export async function ehFetchMedia(path: string, kind: "image" | "thumb"): Promi
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const res = await fetch(url, {
-          headers: {
-            "User-Agent": USER_AGENT,
-            Referer: refererBase + viewerPath,
-            Cookie: cookieFor(cookieMode),
-          },
+          headers: headersFor(cookieMode, { Referer: refererBase + viewerPath }),
         });
         if (res.ok) return res;
         lastErr = new EhError(res.status, `eh image -> HTTP ${res.status}`);
