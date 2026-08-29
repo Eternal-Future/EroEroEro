@@ -15,6 +15,23 @@ import { zipStream } from "./zip";
 
 export const app = new Hono();
 
+// Only images are meant to be cached by browsers/CDN nodes. Everything else
+// (HTML/JS/CSS/JSON/ZIP) defaults to no-store so CDNs never cache it. The
+// `/img` route sets its own cache headers and is skipped below because it
+// always provides a Cache-Control header.
+app.use("*", async (c, next) => {
+  await next();
+  if (!c.res.headers.has("Cache-Control")) {
+    c.res.headers.set("Cache-Control", "no-store");
+  }
+  if (!c.res.headers.has("CDN-Cache-Control")) {
+    c.res.headers.set("CDN-Cache-Control", "no-cache");
+  }
+  if (!c.res.headers.has("Vercel-CDN-Cache-Control")) {
+    c.res.headers.set("Vercel-CDN-Cache-Control", "no-cache");
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Static frontend (served from inlined assets so every target works the same,
 // no 302, no external asset hops)

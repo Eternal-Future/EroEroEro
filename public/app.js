@@ -308,7 +308,7 @@
     runSearch(1);
   }
 
-  // ---- tag syntax suggestions: tag:<source>_<partial> ----------------------
+  // ---- tag syntax suggestions: <channel>:<partial> --------------------------
   let tagSuggestTimer = null;
   let tagSuggestIndex = -1;
   let tagSuggestItems = [];
@@ -317,7 +317,7 @@
     const v = els.q.value;
     scheduleSearchPreview(v);
 
-    const m = v.match(/^tag:([A-Za-z0-9]+)_(.*)$/);
+    const m = v.match(/^([A-Za-z0-9]+):(.*)$/);
     if (m && m[1] && m[2].length >= 1 && SOURCES[m[1]]) {
       clearTimeout(tagSuggestTimer);
       tagSuggestTimer = setTimeout(() => fetchTagSuggest(m[1], m[2]), 180);
@@ -385,6 +385,8 @@
   function scheduleSearchPreview(v) {
     closeSearchPreview();
     if (!v || !v.trim() || v.length < 2 || /^tag:/.test(v)) return;
+    const channelMatch = v.match(/^([A-Za-z0-9]+):/);
+    if (channelMatch && SOURCES[channelMatch[1]]) return; // tag suggestion territory
     clearTimeout(previewTimer);
     previewTimer = setTimeout(async () => {
       try {
