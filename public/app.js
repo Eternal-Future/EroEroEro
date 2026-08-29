@@ -34,6 +34,7 @@
     readerLoading: $("#reader-loading"),
     readerPreloadText: $("#reader-preload-text"),
     readerPreloadFill: $("#reader-preload-fill"),
+    themeToggle: $("#theme-toggle"),
   };
 
   const TAG_TYPES = ["tag", "language", "artist", "character", "parody", "group", "category"];
@@ -48,9 +49,34 @@
   };
   const SOURCES = { nh: "nhentai" };
 
+  const PRELOAD_DEFAULT = 5;
+  function readPreloadCount() {
+    try {
+      const qp = new URLSearchParams(location.search).get("preload");
+      const stored = localStorage.getItem("ero3.preload");
+      const n = Number(qp ?? stored ?? PRELOAD_DEFAULT);
+      return Number.isFinite(n) && n >= 0 && n <= 20 ? Math.floor(n) : PRELOAD_DEFAULT;
+    } catch {
+      return PRELOAD_DEFAULT;
+    }
+  }
+  const PRELOAD_COUNT = readPreloadCount();
+
+  function readTheme() {
+    try {
+      return localStorage.getItem("ero3.theme") || "system";
+    } catch {
+      return "system";
+    }
+  }
+  const THEME_ORDER = ["system", "light", "dark"];
+  const THEME_ICON = { system: "🌗", light: "☀️", dark: "🌙" };
+  const THEME_LABEL = { system: "跟随系统", light: "浅色", dark: "深色" };
+
   const state = {
     view: "search",
     source: "nh",
+    theme: readTheme(),
     query: "",
     sort: "date",
     tagId: null,
@@ -59,6 +85,7 @@
     numPages: 1,
     reader: { id: null, page: 1, pages: [], token: 0 },
     tags: { type: "tag", page: 1, numPages: 1 },
+    detailToken: 0,
   };
 
   // ---- helpers ------------------------------------------------------------
@@ -116,6 +143,29 @@
   async function apiJson(url) {
     const res = await api(url);
     return res.json();
+  }
+
+  // ---- theme --------------------------------------------------------------
+  function applyTheme(mode) {
+    const root = document.documentElement;
+    if (mode === "dark") root.setAttribute("data-theme", "dark");
+    else if (mode === "light") root.setAttribute("data-theme", "light");
+    else root.removeAttribute("data-theme");
+    root.style.colorScheme = mode === "system" ? "" : mode;
+    state.theme = mode;
+    try {
+      localStorage.setItem("ero3.theme", mode);
+    } catch (_) {}
+    if (els.themeToggle) {
+      els.themeToggle.textContent = THEME_ICON[mode] || THEME_ICON.system;
+      els.themeToggle.title = "主题：" + (THEME_LABEL[mode] || THEME_LABEL.system);
+    }
+  }
+
+  function cycleTheme() {
+    const i = THEME_ORDER.indexOf(state.theme);
+    const next = THEME_ORDER[(i + 1) % THEME_ORDER.length];
+    applyTheme(next);
   }
 
   // ---- routing ------------------------------------------------------------
@@ -469,6 +519,8 @@
     const push = !opts || opts.push !== false;
     show("detail");
     state.source = source;
+    state.detailToken += 1;
+    els.dCover.removeAttribute("src");
     els.dCover.className = "cover skeleton";
     els.dTitle.textContent = "加载中…";
     els.dJp.textContent = "";
@@ -488,9 +540,16 @@
 
   function renderDetail(g, push) {
     document.title = g.title + " · Ero³";
-    els.dCover.className = "cover";
-    els.dCover.src = g.cover;
+    const token = state.detailToken;
     els.dCover.alt = g.title;
+    els.dCover.onload = () => {
+      if (token === state.detailToken) els.dCover.className = "cover";
+    };
+    els.dCover.onerror = () => {
+      if (token === state.detailToken) els.dCover.className = "cover";
+    };
+    els.dCover.className = "cover skeleton";
+    els.dCover.src = g.cover;
     els.dTitle.textContent = g.title;
     els.dJp.textContent = g.japanese_title || "";
     els.dMeta.textContent = [
@@ -585,12 +644,13 @@
     els.readerImg.style.visibility = loading ? "hidden" : "visible";
   }
 
-  // Preload the NEXT 5 pages below the current one and show progress on top.
+  // Preload the NEXT pages (in reading order) and show progress on top.
+  // `PRELOAD_COUNT` is configurable (default 5) via `?preload=N` or localStorage `ero3.preload`.
   function preloadNextPages(token) {
     const r = state.reader;
     const targets = [];
-    for (let i = 0; i < 5; i++) {
-      const p = r.pages[r.page + i]; // r.page is 1-based: pages[r.page] is next page
+    for (let i = 0; i < Math.max(0, PRELOAD_COUNT); i++) {
+      const p = r.pages[r.page + i]; // r.page is 1-based: pages[r.page] is the next page
       if (p) targets.push(p.img);
       else break;
     }
@@ -599,16 +659,24 @@
     els.readerPreloadText.textContent = total ? `预加载 0/${total}` : "预加载 0/0";
     els.readerPreloadFill.style.width = "0%";
     if (!total) return;
-    for (const src of targets) {
-      const img = new Image();
-      img.onload = img.onerror = () => {
+
+    const loadOne = (src) =>
+      new Promise((resolve) => {
+        const img = new Image();
+        img.onload = img.onerror = () => resolve();
+        img.src = src;
+      });
+
+    (async () => {
+      for (const src of targets) {
+        if (token !== state.reader.token) return;
+        await loadOne(src);
         if (token !== state.reader.token) return;
         done += 1;
         els.readerPreloadText.textContent = `预加载 ${done}/${total}`;
         els.readerPreloadFill.style.width = `${(done / total) * 100}%`;
-      };
-      img.src = src;
-    }
+      }
+    })();
   }
 
   function readerStep(delta) {
@@ -669,6 +737,7 @@
     });
 
     $("[data-clear-filter]").addEventListener("click", clearFilter);
+    els.themeToggle.addEventListener("click", cycleTheme);
     $("[data-home]").addEventListener("click", () => {
       location.hash = "#/";
       clearFilter();
@@ -723,6 +792,7 @@
   }
 
   // ---- boot ---------------------------------------------------------------
+  applyTheme(state.theme);
   bind();
 
   const route = hashToRoute();

@@ -7,12 +7,29 @@
   --accent: #2563eb;
   --accent-ink: #ffffff;
   --accent-2: #0f9d58;
+  --badge-bg: #ede9fe;
+  --badge-fg: #6d28d9;
   --radius: 12px;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 4px 16px rgba(0, 0, 0, 0.05);
 }
 
+/* Explicit dark theme */
+:root[data-theme="dark"] {
+  --bg: #0f1115;
+  --panel: #171a20;
+  --text: #eceef1;
+  --muted: #9aa3af;
+  --line: #262b34;
+  --accent: #3b82f6;
+  --accent-ink: #07111f;
+  --badge-bg: #2e1065;
+  --badge-fg: #ddd6fe;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+
+/* System (follow OS) dark theme, unless an explicit light theme is forced */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #0f1115;
     --panel: #171a20;
     --text: #eceef1;
@@ -20,6 +37,8 @@
     --line: #262b34;
     --accent: #3b82f6;
     --accent-ink: #07111f;
+    --badge-bg: #2e1065;
+    --badge-fg: #ddd6fe;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 20px rgba(0, 0, 0, 0.4);
   }
 }
@@ -58,7 +77,21 @@ a { color: inherit; }
 .brand-mark { font-size: 18px; }
 .brand-name { font-weight: 700; letter-spacing: -0.02em; }
 .brand-sub { color: var(--muted); font-size: 13px; }
-.topbar-meta { color: var(--muted); font-size: 12px; }
+.topbar-meta { color: var(--muted); font-size: 12px; display: flex; align-items: center; gap: 8px; }
+.theme-toggle {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  border-radius: 8px;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 15px;
+  padding: 0;
+}
 
 .wrap { max-width: 1160px; margin: 0 auto; padding: 20px 16px 60px; }
 
@@ -221,15 +254,12 @@ a { color: inherit; }
   align-items: center;
   padding: 1px 6px;
   border-radius: 5px;
-  background: #ede9fe;
-  color: #6d28d9;
+  background: var(--badge-bg);
+  color: var(--badge-fg);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.02em;
   cursor: default;
-}
-@media (prefers-color-scheme: dark) {
-  .src-badge { background: #2e1065; color: #ddd6fe; }
 }
 
 /* 分页 */
