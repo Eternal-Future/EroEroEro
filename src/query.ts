@@ -15,9 +15,12 @@ const SOURCE_ALIASES: Record<string, string> = {
   ehentai: "eh",
   "e-hentai": "eh",
   exhentai: "eh",
+  jm: "jm",
+  jmcomic: "jm",
+  "18comic": "jm",
 };
 
-const TAG_RE = /(nh|eh|nhentai|ehentai|exhentai):(?:"([^"]+)"|([^\s&]+))/gi;
+const TAG_RE = /(nh|eh|jm|nhentai|ehentai|exhentai|jmcomic|18comic):(?:"([^"]+)"|([^\s&]+))/gi;
 
 function canonicalSource(rawAlias: string): string {
   return SOURCE_ALIASES[rawAlias.toLowerCase()] ?? rawAlias.toLowerCase();
@@ -82,6 +85,9 @@ async function branchItems(
         if (adapter.id === "eh") {
           const canonical = await ehCanonicalTagsFor(rawTag, 1);
           qParts.push(canonical[0] ?? rawTag);
+        } else if (adapter.id === "jm") {
+          // jm has no tag semantics: every <jm:xxx> term is a keyword.
+          qParts.push(rawTag);
         } else {
           qParts.push(`tag:"${rawTag.replace(/"/g, "")}"`);
         }
@@ -92,16 +98,36 @@ async function branchItems(
       return { items: res.items, num_pages: res.num_pages };
     }),
   );
-  const items = results.flatMap((r) => r.items);
+  const items = interleave(results.map((r) => r.items));
   const numPages = Math.max(1, ...results.map((r) => r.num_pages));
   return { items, num_pages: numPages };
+}
+
+function interleave(lists: NormalizedListItem[][]): NormalizedListItem[] {
+  const out: NormalizedListItem[] = [];
+  let added = true;
+  for (let i = 0; added; i++) {
+    added = false;
+    for (const list of lists) {
+      if (i < list.length) {
+        out.push(list[i]);
+        added = true;
+      }
+    }
+  }
+  return out;
 }
 
 function dedupe(items: NormalizedListItem[]): NormalizedListItem[] {
   const seen = new Set<string>();
   const out: NormalizedListItem[] = [];
   for (const it of items) {
-    const src = it.variant === "exh" || it.variant === "eh" ? "eh" : "nh";
+    const src =
+      it.variant === "exh" || it.variant === "eh"
+        ? "eh"
+        : it.variant === "jm"
+          ? "jm"
+          : "nh";
     const key = `${src}:${it.id}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -121,7 +147,7 @@ export async function aggregateSearch(
   const all = await Promise.all(
     branches.map((b) => branchItems(b, page, key, defaultSources)),
   );
-  const items = dedupe(all.flatMap((b) => b.items).slice(0, 50));
+  const items = dedupe(interleave(all.map((b) => b.items)).slice(0, 50));
   const numPages = Math.max(1, ...all.map((b) => b.num_pages));
   return { items, num_pages: numPages, per_page: 25, total: null };
 }

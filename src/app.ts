@@ -369,8 +369,9 @@ app.get("/api/source/:source/download/:id", async (c) => {
 
   const ext = (path: string) => {
     const base = path.split("/").pop() ?? "";
-    const dot = base.lastIndexOf(".");
-    const e = dot >= 0 ? base.slice(dot + 1).toLowerCase() : "";
+    const clean = base.split(/[?#]/)[0];
+    const dot = clean.lastIndexOf(".");
+    const e = dot >= 0 ? clean.slice(dot + 1).toLowerCase() : "";
     return e || "webp";
   };
   const pageName = (p: NormalizedPage) =>

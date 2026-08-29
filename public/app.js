@@ -797,13 +797,13 @@
         selectTagByName(single[2], single[1]);
         return;
       }
-      // jm has no tag suggestions: channel prefix means keyword search in jm.
+      // jm has no tag suggestions: channel prefix means keyword search in jm,
+      // keep the "jm:" prefix visible instead of rewriting the input.
       if (single && single[1] === "jm") {
         state.source = "jm";
         state.tagId = null;
         state.tagName = "";
-        state.query = single[2];
-        els.q.value = single[2];
+        state.query = v;
         history.replaceState(null, "", "#/");
         runSearch(1);
         return;
