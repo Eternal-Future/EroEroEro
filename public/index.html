@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
-  <title>EroEroEro · comic search</title>
+  <title>Ero³ · comic search</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%98%95%3C/text%3E%3C/svg%3E" />
   <link rel="stylesheet" href="/style.css" />
 </head>
@@ -12,17 +12,21 @@
   <header class="topbar">
     <div class="brand" role="button" tabindex="0" data-home>
       <span class="brand-mark">☕</span>
-      <span class="brand-name">EroEroEro</span>
+      <span class="brand-name">Ero³</span>
       <span class="brand-sub">comic search</span>
     </div>
-    <div class="topbar-meta" id="topbar-meta">源：nhentai · 全流量经本服务代理</div>
+    <div class="topbar-meta" id="topbar-meta">源：nh · 全流量经本服务代理</div>
   </header>
 
   <main class="wrap">
     <!-- 搜索视图 -->
     <section id="view-search">
       <form id="search-form" class="searchbar" autocomplete="off">
-        <input id="q" class="search-input" type="search" placeholder="搜索标题 / 关键词，例如 tag:&quot;big breasts&quot;" />
+        <div class="search-input-wrap">
+          <input id="q" class="search-input" type="text" placeholder="搜索标题 / 关键词，例如 tag:nh_only" />
+          <div id="tag-suggest" class="dropdown"></div>
+          <div id="search-preview" class="dropdown"></div>
+        </div>
         <select id="sort" class="select" aria-label="排序">
           <option value="date">最新</option>
           <option value="popular">热门</option>
@@ -32,17 +36,6 @@
         </select>
         <button class="btn btn-primary" type="submit">搜索</button>
       </form>
-
-      <div class="tagzone">
-        <div class="tagzone-head">
-          <div class="tabs" id="tag-type-tabs"></div>
-          <div class="tag-find">
-            <input id="tag-q" class="input" type="text" placeholder="找标签…" />
-            <div id="tag-suggest" class="suggest"></div>
-          </div>
-        </div>
-        <div class="chips" id="tag-chips"></div>
-      </div>
 
       <div id="active-filter" class="active-filter" hidden>
         <span id="active-filter-text"></span>
@@ -69,7 +62,6 @@
             <button class="btn btn-accent" data-download>下载 ZIP</button>
           </div>
           <div id="dl-progress-wrap" class="dl-progress" hidden>
-            <div id="dl-progress" class="dl-progress-bar"></div>
             <div id="dl-progress-text" class="dl-progress-text"></div>
           </div>
         </div>
@@ -78,6 +70,23 @@
       <div id="d-pages" class="pages"></div>
     </section>
   </main>
+
+  <footer class="footer">
+    <button class="link-btn" data-all-tags>点击查看所有标签</button>
+  </footer>
+
+  <!-- 所有标签浮层 -->
+  <div id="tags-view" class="overlay" hidden>
+    <div class="overlay-panel">
+      <div class="overlay-head">
+        <strong>所有标签</strong>
+        <button class="btn btn-ghost" data-tags-close>✕</button>
+      </div>
+      <div class="tabs" id="tag-type-tabs"></div>
+      <div class="chips" id="all-tag-chips"></div>
+      <nav id="tags-pager" class="pager" hidden></nav>
+    </div>
+  </div>
 
   <!-- 阅读器 -->
   <div id="reader" class="reader" hidden>

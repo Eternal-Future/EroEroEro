@@ -1,17 +1,16 @@
 import { Hono } from "hono";
 import { index_html, style_css, app_js } from "./assets";
 import { getEnv } from "./env";
-import {
-  NhentaiError,
-  VALID_SORTS,
-  browseTags,
-  getGallery,
-  searchGalleries,
-  searchTags,
-} from "./nhentai";
+import { NhentaiError } from "./nhentai";
 import { fetchMedia, fetchMediaBuffer, isValidMediaPath, serverOrigin } from "./media";
+import {
+  buildMediaUrl,
+  getSource,
+  listSources,
+  type NormalizedPage,
+  type SourceAdapter,
+} from "./sources";
 import { zipStream } from "./zip";
-import type { SortOrder, PageInfo } from "./types";
 
 export const app = new Hono();
 
@@ -28,50 +27,66 @@ app.get("/app.js", (c) =>
   c.body(app_js, { headers: { "Content-Type": "text/javascript; charset=utf-8" } }),
 );
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 function authKey(c: any): string | undefined {
   return getEnv(c, "NHENTAI_API_KEY");
 }
 
-function imgUrl(path: string, kind: "image" | "thumb"): string {
-  return `/api/img?path=${encodeURIComponent(path)}&kind=${kind}`;
+function src(c: any): SourceAdapter {
+  const name = c.req.param("source");
+  const adapter = getSource(name);
+  if (!adapter) {
+    const err = new NhentaiError(404, `unknown source: ${name}`);
+    throw err;
+  }
+  return adapter;
 }
 
-function toSort(raw: string | undefined): SortOrder {
-  return (VALID_SORTS as string[]).includes(raw ?? "") ? (raw as SortOrder) : "date";
+function positiveInt(raw: string | undefined, fallback: number): number {
+  const n = Number(raw ?? fallback);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : fallback;
+}
+
+function clampInt(raw: string | undefined, fallback: number, min: number, max: number): number {
+  const n = Number(raw ?? fallback);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, Math.floor(n)));
 }
 
 // ---------------------------------------------------------------------------
-// Health
+// Health / sources
 // ---------------------------------------------------------------------------
 app.get("/api/health", (c) =>
-  c.json({ ok: true, source: "nhentai", app: "eroeroero", version: "0.1.0" }),
+  c.json({ ok: true, app: "Ero³", version: "0.2.0", sources: listSources() }),
 );
+
+app.get("/api/sources", (c) => c.json({ sources: listSources() }));
 
 // ---------------------------------------------------------------------------
 // Search (keyword, tag, or home feed)
 // ---------------------------------------------------------------------------
-app.get("/api/search", async (c) => {
+app.get("/api/source/:source/search", async (c) => {
+  const adapter = src(c);
   const query = c.req.query("q") ?? "";
-  const tagIdRaw = c.req.query("tag_id");
-  const sort = toSort(c.req.query("sort"));
-  const page = Math.max(1, Number(c.req.query("page") ?? "1") || 1);
-  const tagId = tagIdRaw ? Number(tagIdRaw) : undefined;
-
-  const data = await searchGalleries(
-    { query, tagId: tagId && Number.isFinite(tagId) ? tagId : undefined, sort, page },
-    authKey(c),
-  );
+  const tagId = c.req.query("tag_id");
+  const tagName = c.req.query("tag") ?? undefined;
+  const page = positiveInt(c.req.query("page"), 1);
+  const data = await adapter.search({
+    query,
+    tagId,
+    tagName,
+    sort: c.req.query("sort"),
+    page,
+    key: authKey(c),
+  });
 
   return c.json({
-    items: data.result.map((r) => ({
-      id: r.id,
-      title: r.english_title || r.japanese_title || `#${r.id}`,
-      japanese_title: r.japanese_title,
-      pages: r.num_pages,
-      favorites: r.num_favorites,
-      width: r.thumbnail_width,
-      height: r.thumbnail_height,
-      thumb: imgUrl(r.thumbnail, "thumb"),
+    source: adapter.id,
+    items: data.items.map((it) => ({
+      ...it,
+      thumb: buildMediaUrl(adapter.id, it.thumb.path, it.thumb.kind),
     })),
     page,
     num_pages: data.num_pages,
@@ -83,58 +98,58 @@ app.get("/api/search", async (c) => {
 // ---------------------------------------------------------------------------
 // Gallery detail
 // ---------------------------------------------------------------------------
-app.get("/api/gallery/:id", async (c) => {
-  const id = Number(c.req.param("id"));
-  if (!Number.isFinite(id) || id <= 0) return c.json({ error: "invalid gallery id" }, 400);
+app.get("/api/source/:source/gallery/:id", async (c) => {
+  const adapter = src(c);
+  const id = c.req.param("id");
+  if (!id) return c.json({ error: "invalid gallery id" }, 400);
 
-  const g = await getGallery(id, authKey(c));
+  const g = await adapter.gallery(id, authKey(c));
   return c.json({
+    source: adapter.id,
     id: g.id,
-    title: g.title.english || g.title.pretty || `#${g.id}`,
-    japanese_title: g.title.japanese,
-    pretty: g.title.pretty,
-    scanlator: g.scanlator ?? "",
+    title: g.title,
+    japanese_title: g.japanese_title,
+    pretty: g.pretty,
+    scanlator: g.scanlator,
     upload_date: g.upload_date,
     num_pages: g.num_pages,
     num_favorites: g.num_favorites,
-    cover: imgUrl(g.cover.path, "thumb"),
-    thumb: imgUrl(g.thumbnail.path, "thumb"),
-    tags: g.tags.map((t) => ({
-      id: t.id,
-      type: t.type,
-      name: t.name,
-      slug: t.slug,
-      count: t.count,
-    })),
+    cover: buildMediaUrl(adapter.id, g.cover.path, "thumb"),
+    thumb: buildMediaUrl(adapter.id, g.thumbnail.path, "thumb"),
+    tags: g.tags,
     pages: g.pages.map((p) => ({
       number: p.number,
       width: p.width,
       height: p.height,
-      img: imgUrl(p.path, "image"),
-      thumb: imgUrl(p.thumbnail, "thumb"),
+      img: buildMediaUrl(adapter.id, p.path, "image"),
+      thumb: buildMediaUrl(adapter.id, p.thumbnail, "thumb"),
     })),
   });
 });
 
 // ---------------------------------------------------------------------------
-// Tag autocomplete + tag browsing
+// Tag autocomplete + tag browsing (source-aware)
 // ---------------------------------------------------------------------------
-app.get("/api/tags", async (c) => {
+app.get("/api/source/:source/tags", async (c) => {
+  const adapter = src(c);
   const q = (c.req.query("q") ?? "").trim();
-  if (!q) return c.json([]);
-  const limit = Math.min(20, Math.max(1, Number(c.req.query("limit") ?? "8") || 8));
-  const tags = await searchTags(q, limit);
-  return c.json(tags.map((t) => ({ id: t.id, type: t.type, name: t.name, count: t.count })));
+  if (!q) return c.json({ source: adapter.id, items: [] });
+  const limit = clampInt(c.req.query("limit"), 8, 1, 20);
+  const type = c.req.query("type") ?? undefined;
+  const tags = await adapter.tags(q, limit, type);
+  return c.json({ source: adapter.id, items: tags });
 });
 
-app.get("/api/tags/browse", async (c) => {
+app.get("/api/source/:source/tags/browse", async (c) => {
+  const adapter = src(c);
   const type = (c.req.query("type") ?? "tag").trim() || "tag";
-  const page = Math.max(1, Number(c.req.query("page") ?? "1") || 1);
-  const sort = c.req.query("sort") === "name" ? "name" : "popular";
-  const data = await browseTags(type, page, sort);
+  const page = positiveInt(c.req.query("page"), 1);
+  const sort = c.req.query("sort") ?? "popular";
+  const data = await adapter.browseTags(type, page, sort);
   return c.json({
+    source: adapter.id,
     type,
-    items: data.result.map((t) => ({ id: t.id, type: t.type, name: t.name, count: t.count })),
+    items: data.items,
     page,
     num_pages: data.num_pages,
   });
@@ -143,12 +158,14 @@ app.get("/api/tags/browse", async (c) => {
 // ---------------------------------------------------------------------------
 // Media proxy — no direct links, no 302
 // ---------------------------------------------------------------------------
-app.get("/api/img", async (c) => {
+app.get("/api/source/:source/img", async (c) => {
+  const adapter = src(c);
   const path = c.req.query("path") ?? "";
   const kind = c.req.query("kind") === "image" ? "image" : "thumb";
   if (!isValidMediaPath(path)) return c.json({ error: "bad media path" }, 400);
 
-  const { data, contentType } = await fetchMediaBuffer(path, kind);
+  const servers = await adapter.mediaServers(kind);
+  const { data, contentType } = await fetchMediaBuffer(path, servers);
   return new Response(data.buffer as ArrayBuffer, {
     headers: {
       "Content-Type": contentType,
@@ -160,22 +177,28 @@ app.get("/api/img", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// Download — real-time fetch every page and stream a ZIP to the client
+// Download — server fetches pages in real time and streams a ZIP to the client
+// with no fixed content-length. The browser's download manager owns the file.
 // ---------------------------------------------------------------------------
-app.get("/api/download/:id", async (c) => {
-  const id = Number(c.req.param("id"));
-  if (!Number.isFinite(id) || id <= 0) return c.json({ error: "invalid gallery id" }, 400);
+app.get("/api/source/:source/download/:id", async (c) => {
+  const adapter = src(c);
+  const id = c.req.param("id");
+  if (!id) return c.json({ error: "invalid gallery id" }, 400);
 
-  const g = await getGallery(id, authKey(c));
-  const folder = sanitize(`${g.id} ${g.title.pretty || g.title.english || "gallery"}`)
+  const g = await adapter.gallery(id, authKey(c));
+  const imageServers = await adapter.mediaServers("image");
+
+  const folder = sanitize(`${g.id} ${g.pretty || g.title || "gallery"}`)
     .slice(0, 80)
     .trim()
     .replace(/\.+$/, "") || String(g.id);
 
   const meta = JSON.stringify(
     {
+      source: adapter.id,
       id: g.id,
       title: g.title,
+      japanese_title: g.japanese_title,
       tags: g.tags.map((t) => ({ id: t.id, type: t.type, name: t.name })),
       num_pages: g.num_pages,
       num_favorites: g.num_favorites,
@@ -185,8 +208,7 @@ app.get("/api/download/:id", async (c) => {
   );
 
   const ext = (path: string) => path.split(".").pop()?.toLowerCase() || "jpg";
-
-  const pageName = (p: { number: number; path: string }) =>
+  const pageName = (p: NormalizedPage) =>
     `${folder}/${String(p.number).padStart(4, "0")}.${ext(p.path)}`;
 
   const entries = (async function* () {
@@ -194,10 +216,12 @@ app.get("/api/download/:id", async (c) => {
       name: `${folder}/meta.json`,
       open: async () => new TextEncoder().encode(meta) as Uint8Array,
     };
-    yield* fetchPagesBuffered(g.pages, 4, pageName);
+    yield* fetchPagesBuffered(g.pages, 4, pageName, imageServers);
   })();
 
-  const asciiName = (folder.replace(/[^\x20-\x7e]/g, "_").replace(/\s+/g, " ").trim() || String(g.id)).slice(0, 60);
+  const asciiName = (
+    folder.replace(/[^\x20-\x7e]/g, "_").replace(/\s+/g, " ").trim() || String(g.id)
+  ).slice(0, 60);
   const disposition = `attachment; filename="${asciiName}.zip"; filename*=UTF-8''${encodeURIComponent(folder)}.zip`;
 
   return new Response(zipStream(entries), {
@@ -219,7 +243,7 @@ app.onError((err, c) => {
     return c.json({ error: err.message, status: err.status }, { status: err.status as any });
   }
   const message = err instanceof Error ? err.message : String(err);
-  console.error("[eroeroero]", message);
+  console.error("[ero-cubed]", message);
   return c.json({ error: "internal error", detail: message }, 500);
 });
 
@@ -227,9 +251,10 @@ app.onError((err, c) => {
 // Helpers
 // ---------------------------------------------------------------------------
 async function* fetchPagesBuffered(
-  pages: PageInfo[],
+  pages: NormalizedPage[],
   limit: number,
-  nameFor: (p: PageInfo) => string,
+  nameFor: (p: NormalizedPage) => string,
+  servers: string[],
 ): AsyncGenerator<{ name: string; open: () => Promise<Uint8Array> }, void, void> {
   let preferredServer: string | undefined;
   const results = new Map<number, Uint8Array>();
@@ -252,7 +277,7 @@ async function* fetchPagesBuffered(
       const i = next++;
       (async () => {
         try {
-          const { response, url } = await fetchMedia(pages[i].path, "image", {
+          const { response, url } = await fetchMedia(pages[i].path, servers, {
             preferredServer,
             timeoutMs: 12000,
           });

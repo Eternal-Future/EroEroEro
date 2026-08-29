@@ -1,4 +1,4 @@
-/* EroEroEro — minimal comic search frontend. First source: nhentai (proxied). */
+/* Ero³ — minimal aggregator comic search frontend. First source: nhentai (proxied). */
 (() => {
   "use strict";
 
@@ -9,10 +9,8 @@
     form: $("#search-form"),
     q: $("#q"),
     sort: $("#sort"),
-    tagTabs: $("#tag-type-tabs"),
-    tagQ: $("#tag-q"),
     tagSuggest: $("#tag-suggest"),
-    tagChips: $("#tag-chips"),
+    searchPreview: $("#search-preview"),
     activeFilter: $("#active-filter"),
     activeFilterText: $("#active-filter-text"),
     status: $("#status"),
@@ -25,8 +23,11 @@
     dTags: $("#d-tags"),
     dPages: $("#d-pages"),
     dlWrap: $("#dl-progress-wrap"),
-    dlBar: $("#dl-progress"),
     dlText: $("#dl-progress-text"),
+    tagsView: $("#tags-view"),
+    tagTypeTabs: $("#tag-type-tabs"),
+    allTagChips: $("#all-tag-chips"),
+    tagsPager: $("#tags-pager"),
     reader: $("#reader"),
     readerCount: $("#reader-count"),
     readerImg: $("#reader-img"),
@@ -42,20 +43,26 @@
     group: "社团",
     category: "分类",
   };
+  const SOURCES = { nh: "nhentai" };
 
   const state = {
     view: "search",
+    source: "nh",
     query: "",
     sort: "date",
     tagId: null,
     tagName: "",
-    tagType: "tag",
     page: 1,
     numPages: 1,
     reader: { id: null, page: 1, pages: [] },
+    tags: { type: "tag", page: 1, numPages: 1 },
   };
 
   // ---- helpers ------------------------------------------------------------
+  function apiBase(source) {
+    return `/api/source/${source || state.source}`;
+  }
+
   function fmt(n) {
     if (n == null) return "—";
     return Number(n) >= 10000
@@ -71,12 +78,7 @@
   }
 
   function status(msg, isErr) {
-    if (msg === null) {
-      els.status.textContent = "";
-      els.status.className = "status";
-      return;
-    }
-    els.status.textContent = msg;
+    els.status.textContent = msg || "";
     els.status.className = "status" + (isErr ? " err" : "");
   }
 
@@ -109,15 +111,17 @@
   function hashToRoute() {
     const h = (location.hash || "#/").replace(/^#/, "");
     const parts = h.split("/").filter(Boolean);
-    // "#/g/123" -> detail; otherwise search
-    if (parts[0] === "g" && parts[1]) return { view: "detail", id: parts[1] };
+    // "#/g/nh/123" -> detail; otherwise search
+    if (parts[0] === "g" && parts[1] && parts[2]) {
+      return { view: "detail", source: parts[1], id: parts[2] };
+    }
     return { view: "search" };
   }
 
-  function applyHash(stateOnly) {
+  function applyHash() {
     const route = hashToRoute();
     if (route.view === "detail") {
-      openDetail(route.id, { push: false });
+      openDetail(route.source, route.id, { push: false });
     } else {
       show("search");
     }
@@ -125,7 +129,7 @@
 
   // ---- search -------------------------------------------------------------
   function activeFilterText() {
-    if (state.tagId) return "标签：" + (state.tagName || "#" + state.tagId);
+    if (state.tagId) return "标签：" + state.source + ":" + (state.tagName || "#" + state.tagId);
     if (state.query) return "关键词：" + state.query;
     return "";
   }
@@ -143,19 +147,25 @@
   async function runSearch(page) {
     if (page != null) state.page = page;
     show("search");
+    closeDropdowns();
     renderActiveFilter();
     status("加载中…");
     els.grid.innerHTML = "";
     const params = new URLSearchParams({ page: String(state.page), sort: state.sort });
     if (state.tagId) params.set("tag_id", String(state.tagId));
     else if (state.query) params.set("q", state.query);
+    else if (state.tagName) params.set("tag", state.tagName);
 
     try {
-      const data = await apiJson("/api/search?" + params.toString());
+      const data = await apiJson(`${apiBase()}/search?${params.toString()}`);
       state.numPages = data.num_pages || 1;
       renderGrid(data.items || []);
       renderPager();
-      status(data.items && data.items.length ? `共 ${fmt(data.total)} 条 · 第 ${state.page}/${state.numPages} 页` : "没有结果");
+      status(
+        data.items && data.items.length
+          ? `共 ${fmt(data.total)} 条 · 第 ${state.page}/${state.numPages} 页`
+          : "没有结果",
+      );
     } catch (err) {
       status("加载失败：" + err.message, true);
     }
@@ -163,14 +173,10 @@
 
   function renderGrid(items) {
     els.grid.innerHTML = "";
-    if (!items.length) {
-      els.grid.innerHTML = "";
-      return;
-    }
     const frag = document.createDocumentFragment();
     for (const it of items) {
       const a = el("a", "card");
-      a.href = "#/g/" + it.id;
+      a.href = `#/g/${state.source}/${it.id}`;
       a.setAttribute("aria-label", it.title);
 
       const img = document.createElement("img");
@@ -179,9 +185,9 @@
       img.decoding = "async";
       img.alt = "";
       img.src = it.thumb;
-      if (it.width && it.height) {
-        img.width = it.width;
-        img.height = it.height;
+      if (it.thumb && it.thumb.width) {
+        img.width = it.thumb.width;
+        img.height = it.thumb.height;
       }
 
       const body = el("div", "card-body");
@@ -214,51 +220,21 @@
     els.pager.append(prev, ind, next);
   }
 
-  // ---- tags ---------------------------------------------------------------
-  function renderTabs() {
-    els.tagTabs.innerHTML = "";
-    for (const type of TAG_TYPES) {
-      const b = el("button", "tab" + (type === state.tagType ? " active" : ""), TAG_LABEL[type] || type);
-      b.dataset.type = type;
-      b.addEventListener("click", () => {
-        state.tagType = type;
-        renderTabs();
-        loadTagChips();
-      });
-      els.tagTabs.append(b);
-    }
-  }
-
-  async function loadTagChips() {
-    els.tagChips.innerHTML = "";
-    els.tagChips.append(el("span", "chip tag-type", "加载标签…"));
-    try {
-      const data = await apiJson(`/api/tags/browse?type=${encodeURIComponent(state.tagType)}&page=1`);
-      const items = data.items || [];
-      els.tagChips.innerHTML = "";
-      if (!items.length) {
-        els.tagChips.append(el("span", "chip tag-type", "（无标签）"));
-        return;
-      }
-      const frag = document.createDocumentFragment();
-      for (const t of items) {
-        const chip = el("button", "chip", t.name);
-        chip.append(el("span", "chip-count", fmt(t.count)));
-        chip.addEventListener("click", () => selectTag(t));
-        frag.append(chip);
-      }
-      els.tagChips.append(frag);
-    } catch (err) {
-      els.tagChips.innerHTML = "";
-      els.tagChips.append(el("span", "chip tag-type", "标签加载失败"));
-    }
-  }
-
-  function selectTag(t) {
-    state.tagId = t.id;
-    state.tagName = t.name;
+  function selectTag(t, source) {
+    state.source = source || state.source;
+    state.tagId = t && t.id != null ? t.id : null;
+    state.tagName = t ? t.name : "";
     state.query = "";
-    els.q.value = "";
+    els.q.value = `${state.source}:${t.name}`;
+    runSearch(1);
+  }
+
+  function selectTagByName(name, source) {
+    state.source = source || state.source;
+    state.tagId = null;
+    state.tagName = name;
+    state.query = "";
+    els.q.value = `${state.source}:${name}`;
     runSearch(1);
   }
 
@@ -270,72 +246,55 @@
     runSearch(1);
   }
 
+  // ---- tag syntax suggestions: tag:<source>_<partial> ----------------------
   let tagSuggestTimer = null;
   let tagSuggestIndex = -1;
   let tagSuggestItems = [];
 
-  function setupTagAutocomplete() {
-    els.tagQ.addEventListener("input", () => {
-      clearTimeout(tagSuggestTimer);
-      const q = els.tagQ.value.trim();
-      if (!q) {
-        closeSuggest();
-        return;
-      }
-      tagSuggestTimer = setTimeout(() => fetchTagSuggest(q), 180);
-    });
-    els.tagQ.addEventListener("keydown", (e) => {
-      const items = els.tagSuggest.querySelectorAll(".suggest-item");
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        tagSuggestIndex = Math.min(tagSuggestIndex + 1, items.length - 1);
-        paintSuggestHover(items);
-      } else if (e.key === "ArrowUp") {
-        e.preventDefault();
-        tagSuggestIndex = Math.max(tagSuggestIndex - 1, 0);
-        paintSuggestHover(items);
-      } else if (e.key === "Enter") {
-        e.preventDefault();
-        if (tagSuggestItems[tagSuggestIndex]) {
-          pickTagSuggest(tagSuggestItems[tagSuggestIndex]);
-        }
-      } else if (e.key === "Escape") {
-        closeSuggest();
-      }
-    });
-    document.addEventListener("click", (e) => {
-      if (!els.tagQ.contains(e.target) && !els.tagSuggest.contains(e.target)) closeSuggest();
-    });
-  }
+  function onSearchInput() {
+    const v = els.q.value;
+    scheduleSearchPreview(v);
 
-  async function fetchTagSuggest(q) {
-    try {
-      const items = await apiJson("/api/tags?q=" + encodeURIComponent(q) + "&limit=8");
-      tagSuggestItems = items;
-      tagSuggestIndex = -1;
-      renderSuggest(items);
-    } catch (_) {
-      closeSuggest();
+    const m = v.match(/^tag:([A-Za-z0-9]+)_(.*)$/);
+    if (m && m[1] && m[2].length >= 1 && SOURCES[m[1]]) {
+      clearTimeout(tagSuggestTimer);
+      tagSuggestTimer = setTimeout(() => fetchTagSuggest(m[1], m[2]), 180);
+    } else {
+      closeTagSuggest();
     }
   }
 
-  function renderSuggest(items) {
+  async function fetchTagSuggest(source, partial) {
+    try {
+      const data = await apiJson(
+        `${apiBase(source)}/tags?q=${encodeURIComponent(partial)}&limit=5`,
+      );
+      const items = data.items || [];
+      tagSuggestItems = items;
+      tagSuggestIndex = -1;
+      renderTagSuggest(source, items);
+    } catch (_) {
+      closeTagSuggest();
+    }
+  }
+
+  function renderTagSuggest(source, items) {
     els.tagSuggest.innerHTML = "";
     if (!items.length) {
-      els.tagSuggest.append(el("div", "suggest-empty", "没有匹配的标签"));
+      els.tagSuggest.append(el("div", "dropdown-empty", "没有匹配的标签"));
     } else {
       for (const t of items) {
         const row = el("div", "suggest-item");
-        row.append(el("span", null, t.name));
+        row.append(el("span", null, `${source}:${t.name}`));
         row.append(el("span", "st-type", (TAG_LABEL[t.type] || t.type) + " · " + fmt(t.count)));
         row.addEventListener("mousedown", (e) => {
           e.preventDefault();
-          pickTagSuggest(t);
+          pickTagSuggest(source, t);
         });
         row.addEventListener("mouseenter", () => {
-          const items = els.tagSuggest.querySelectorAll(".suggest-item");
-          tagSuggestIndex = [...items].indexOf(row);
-          paintSuggestHover(items);
+          const nodes = els.tagSuggest.querySelectorAll(".suggest-item");
+          tagSuggestIndex = [...nodes].indexOf(row);
+          paintSuggestHover(nodes);
         });
         els.tagSuggest.append(row);
       }
@@ -343,26 +302,161 @@
     els.tagSuggest.classList.add("open");
   }
 
-  function paintSuggestHover(items) {
-    items.forEach((n, i) => n.classList.toggle("hover", i === tagSuggestIndex));
+  function paintSuggestHover(nodes) {
+    nodes.forEach((n, i) => n.classList.toggle("hover", i === tagSuggestIndex));
   }
 
-  function pickTagSuggest(t) {
-    selectTag(t);
-    els.tagQ.value = "";
-    closeSuggest();
+  function pickTagSuggest(source, t) {
+    closeTagSuggest();
+    selectTag(t, source);
   }
 
-  function closeSuggest() {
+  function closeTagSuggest() {
     els.tagSuggest.classList.remove("open");
     tagSuggestItems = [];
     tagSuggestIndex = -1;
   }
 
+  // ---- search preview: stop typing for 2s -> top 5 results ---------------
+  let previewTimer = null;
+
+  function scheduleSearchPreview(v) {
+    closeSearchPreview();
+    if (!v || !v.trim() || v.length < 2 || /^tag:/.test(v)) return;
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(async () => {
+      try {
+        const data = await apiJson(
+          `${apiBase()}/search?q=${encodeURIComponent(v.trim())}&sort=${state.sort}&page=1`,
+        );
+        renderSearchPreview((data.items || []).slice(0, 5));
+      } catch (_) {
+        /* preview is best-effort */
+      }
+    }, 2000);
+  }
+
+  function renderSearchPreview(items) {
+    els.searchPreview.innerHTML = "";
+    if (!items.length) {
+      els.searchPreview.append(el("div", "dropdown-empty", "没有结果"));
+    } else {
+      for (const it of items) {
+        const row = el("div", "preview-item");
+        const img = document.createElement("img");
+        img.className = "pv-thumb";
+        img.loading = "lazy";
+        img.src = it.thumb;
+        img.alt = "";
+        const body = el("div", "pv-body");
+        body.append(el("div", "pv-title", it.title));
+        body.append(el("div", "pv-meta", `${it.pages} 页 · ♥ ${fmt(it.favorites)}`));
+        row.append(img, body);
+        row.addEventListener("mousedown", (e) => {
+          e.preventDefault();
+          closeSearchPreview();
+          location.hash = `#/g/${state.source}/${it.id}`;
+        });
+        els.searchPreview.append(row);
+      }
+    }
+    els.searchPreview.classList.add("open");
+  }
+
+  function closeSearchPreview() {
+    clearTimeout(previewTimer);
+    els.searchPreview.classList.remove("open");
+    els.searchPreview.innerHTML = "";
+  }
+
+  function closeDropdowns() {
+    closeTagSuggest();
+    closeSearchPreview();
+  }
+
+  // ---- all-tags overlay ---------------------------------------------------
+  function openTagsView() {
+    state.tags = { type: state.tags.type, page: 1, numPages: 1 };
+    els.tagsView.hidden = false;
+    renderTagTabs();
+    loadAllTags();
+  }
+
+  function closeTagsView() {
+    els.tagsView.hidden = true;
+  }
+
+  function renderTagTabs() {
+    els.tagTypeTabs.innerHTML = "";
+    for (const type of TAG_TYPES) {
+      const b = el("button", "tab" + (type === state.tags.type ? " active" : ""), TAG_LABEL[type] || type);
+      b.addEventListener("click", () => {
+        state.tags.type = type;
+        state.tags.page = 1;
+        renderTagTabs();
+        loadAllTags();
+      });
+      els.tagTypeTabs.append(b);
+    }
+  }
+
+  async function loadAllTags() {
+    els.allTagChips.innerHTML = "";
+    els.allTagChips.append(el("span", "chip tag-type", "加载标签…"));
+    try {
+      const data = await apiJson(
+        `${apiBase()}/tags/browse?type=${encodeURIComponent(state.tags.type)}&page=${state.tags.page}`,
+      );
+      state.tags.numPages = data.num_pages || 1;
+      const items = data.items || [];
+      els.allTagChips.innerHTML = "";
+      const frag = document.createDocumentFragment();
+      for (const t of items) {
+        const chip = el("button", "chip", `${state.source}:${t.name}`);
+        chip.append(el("span", "chip-count", fmt(t.count)));
+        chip.addEventListener("click", () => {
+          closeTagsView();
+          selectTag(t, state.source);
+        });
+        frag.append(chip);
+      }
+      els.allTagChips.append(frag);
+      renderTagsPager();
+    } catch (err) {
+      els.allTagChips.innerHTML = "";
+      els.allTagChips.append(el("span", "chip tag-type", "标签加载失败"));
+    }
+  }
+
+  function renderTagsPager() {
+    if (state.tags.numPages <= 1) {
+      els.tagsPager.hidden = true;
+      els.tagsPager.innerHTML = "";
+      return;
+    }
+    els.tagsPager.hidden = false;
+    els.tagsPager.innerHTML = "";
+    const prev = el("button", "btn", "‹ 上一页");
+    prev.disabled = state.tags.page <= 1;
+    prev.addEventListener("click", () => {
+      state.tags.page -= 1;
+      loadAllTags();
+    });
+    const next = el("button", "btn", "下一页 ›");
+    next.disabled = state.tags.page >= state.tags.numPages;
+    next.addEventListener("click", () => {
+      state.tags.page += 1;
+      loadAllTags();
+    });
+    const ind = el("span", "page-ind", state.tags.page + " / " + state.tags.numPages);
+    els.tagsPager.append(prev, ind, next);
+  }
+
   // ---- detail -------------------------------------------------------------
-  async function openDetail(id, opts) {
+  async function openDetail(source, id, opts) {
     const push = !opts || opts.push !== false;
     show("detail");
+    state.source = source;
     els.dCover.className = "cover skeleton";
     els.dTitle.textContent = "加载中…";
     els.dJp.textContent = "";
@@ -371,7 +465,7 @@
     els.dPages.innerHTML = "";
     els.dlWrap.hidden = true;
     try {
-      const g = await apiJson("/api/gallery/" + encodeURIComponent(id));
+      const g = await apiJson(`${apiBase(source)}/gallery/${encodeURIComponent(id)}`);
       renderDetail(g, push);
     } catch (err) {
       els.dTitle.textContent = "加载失败";
@@ -381,21 +475,28 @@
   }
 
   function renderDetail(g, push) {
-    document.title = g.title + " · EroEroEro";
+    document.title = g.title + " · Ero³";
     els.dCover.className = "cover";
     els.dCover.src = g.cover;
     els.dCover.alt = g.title;
     els.dTitle.textContent = g.title;
     els.dJp.textContent = g.japanese_title || "";
-    els.dMeta.textContent = [g.num_pages + " 页", "♥ " + fmt(g.num_favorites), "上传于 " + fmtDate(g.upload_date), g.scanlator].filter(Boolean).join(" · ");
+    els.dMeta.textContent = [
+      g.num_pages + " 页",
+      "♥ " + fmt(g.num_favorites),
+      "上传于 " + fmtDate(g.upload_date),
+      g.scanlator,
+    ]
+      .filter(Boolean)
+      .join(" · ");
 
     els.dTags.innerHTML = "";
     const frag = document.createDocumentFragment();
     for (const t of g.tags) {
-      const chip = el("button", "chip", (TAG_LABEL[t.type] ? TAG_LABEL[t.type] + "：" : "") + t.name);
+      const chip = el("button", "chip", `${g.source}:${t.name}`);
       chip.append(el("span", "chip-count", fmt(t.count)));
       chip.addEventListener("click", () => {
-        selectTag(t);
+        selectTag(t, g.source);
         history.replaceState(null, "", "#/");
       });
       frag.append(chip);
@@ -418,18 +519,24 @@
     }
     els.dPages.append(pfrag);
 
-    const readBtn = $("[data-read]");
-    const dlBtn = $("[data-download]");
-    readBtn.onclick = () => openReader(g, 1);
-    dlBtn.onclick = () => download(g);
+    $("[data-read]").onclick = () => openReader(g, 1);
+    $("[data-download]").onclick = () => download(g);
 
-    if (push && location.hash !== "#/g/" + g.id) location.hash = "#/g/" + g.id;
+    if (push && location.hash !== `#/g/${g.source}/${g.id}`) {
+      location.hash = `#/g/${g.source}/${g.id}`;
+    }
   }
 
   function fmtDate(unix) {
     if (!unix) return "—";
     const d = new Date(unix * 1000);
-    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+    return (
+      d.getFullYear() +
+      "-" +
+      String(d.getMonth() + 1).padStart(2, "0") +
+      "-" +
+      String(d.getDate()).padStart(2, "0")
+    );
   }
 
   // ---- reader -------------------------------------------------------------
@@ -450,7 +557,6 @@
       els.readerImg.src = pg.img;
     };
     img.src = pg.img;
-    // preload neighbors
     if (r.pages[r.page]) preload(r.pages[r.page].img);
     if (r.pages[r.page - 2]) preload(r.pages[r.page - 2].img);
   }
@@ -467,7 +573,6 @@
     r.page = next;
     els.readerImg.style.opacity = "0.4";
     renderReaderPage();
-    // small fade to signal page change
     setTimeout(() => (els.readerImg.style.opacity = "1"), 30);
   }
 
@@ -478,83 +583,38 @@
     state.reader = { id: null, page: 1, pages: [] };
   }
 
-  // ---- download (stream with progress) ------------------------------------
-  async function download(g) {
+  // ---- download: browser-native streamed download (no fixed size) ---------
+  function download(g) {
     els.dlWrap.hidden = false;
-    els.dlBar.innerHTML = '<div style="width:0%"></div>';
-    els.dlText.textContent = "准备下载…";
-    const bar = els.dlBar.firstChild;
-    const total = g.num_pages;
-    let received = 0;
-    let last = Date.now();
-
-    try {
-      const res = await fetch("/api/download/" + encodeURIComponent(g.id));
-      if (!res.ok) {
-        let msg = "HTTP " + res.status;
-        try { const j = await res.json(); if (j.error) msg = j.error; } catch (_) {}
-        throw new Error(msg);
-      }
-      const contentLength = Number(res.headers.get("x-total-bytes") || res.headers.get("content-length") || 0);
-      const reader = res.body.getReader();
-      const chunks = [];
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (value) {
-          chunks.push(value);
-          received += value.length;
-        }
-        const now = Date.now();
-        if (now - last > 120) {
-          last = now;
-          const pct = contentLength ? Math.min(100, (received / contentLength) * 100) : null;
-          const label = contentLength
-            ? pct.toFixed(0) + "% · " + fmtBytes(received) + " / " + fmtBytes(contentLength)
-            : "已下载 " + fmtBytes(received) + "（"+ received + " 字节）";
-          els.dlText.textContent = "打包下载中… " + label;
-          if (pct != null) bar.style.width = pct + "%";
-        }
-      }
-      const blob = new Blob(chunks, { type: "application/zip" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = sanitize(g.title) + ".zip";
-      document.body.append(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 4000);
-      els.dlText.textContent = "下载完成（" + fmtBytes(received) + "）";
-      bar.style.width = "100%";
-    } catch (err) {
-      els.dlText.textContent = "下载失败：" + err.message;
-    }
-  }
-
-  function fmtBytes(n) {
-    if (n < 1024) return n + " B";
-    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
-    return (n / 1024 / 1024).toFixed(1) + " MB";
-  }
-
-  function sanitize(s) {
-    return String(s || "download")
-      .replace(/[\\/:*?"<>|]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, 100);
+    els.dlText.textContent = "已交给浏览器流式下载…";
+    const a = document.createElement("a");
+    a.href = `${apiBase(g.source)}/download/${encodeURIComponent(g.id)}`;
+    document.body.append(a);
+    a.click();
+    a.remove();
   }
 
   // ---- events -------------------------------------------------------------
   function bind() {
     els.form.addEventListener("submit", (e) => {
       e.preventDefault();
-      state.query = els.q.value.trim();
+      const v = els.q.value.trim();
+      const m = v.match(/^([A-Za-z0-9]+):(.+)$/);
+      // "<channel>:<tag>" (channel naming) -> search that tag by name.
+      if (m && SOURCES[m[1]]) {
+        selectTagByName(m[2].trim(), m[1]);
+        return;
+      }
+      state.query = v;
       state.tagId = null;
       state.tagName = "";
       history.replaceState(null, "", "#/");
       runSearch(1);
+    });
+
+    els.q.addEventListener("input", onSearchInput);
+    els.q.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeDropdowns();
     });
 
     els.sort.addEventListener("change", () => {
@@ -573,8 +633,11 @@
       show("search");
     });
 
-    $("[data-read]").addEventListener("click", () => {});
-    $("[data-download]").addEventListener("click", () => {});
+    $("[data-all-tags]").addEventListener("click", openTagsView);
+    $("[data-tags-close]").addEventListener("click", closeTagsView);
+    els.tagsView.addEventListener("click", (e) => {
+      if (e.target === els.tagsView) closeTagsView();
+    });
 
     $("[data-reader-close]").addEventListener("click", closeReader);
     $("[data-reader-prev]").addEventListener("click", () => readerStep(-1));
@@ -598,21 +661,25 @@
       }
     });
 
-    // lazy thumbnail error fallback
-    els.grid.addEventListener("error", (e) => {
-      if (e.target && e.target.tagName === "IMG") {
-        e.target.style.opacity = "0.2";
+    document.addEventListener("click", (e) => {
+      if (!els.q.contains(e.target) && !els.tagSuggest.contains(e.target) && !els.searchPreview.contains(e.target)) {
+        closeDropdowns();
       }
-    }, true);
+    });
+
+    els.grid.addEventListener(
+      "error",
+      (e) => {
+        if (e.target && e.target.tagName === "IMG") e.target.style.opacity = "0.2";
+      },
+      true,
+    );
   }
 
   // ---- boot ---------------------------------------------------------------
-  renderTabs();
-  setupTagAutocomplete();
   bind();
-  loadTagChips();
 
   const route = hashToRoute();
-  if (route.view === "detail") openDetail(route.id, { push: false });
+  if (route.view === "detail") openDetail(route.source, route.id, { push: false });
   else runSearch(1);
 })();

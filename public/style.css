@@ -306,6 +306,96 @@ a { color: inherit; }
 
 .reader .btn-ghost { color: #fff; border-color: #3a3a3a; }
 
+/* 搜索输入下拉 */
+.search-input-wrap { position: relative; flex: 1 1 280px; min-width: 200px; }
+.search-input-wrap .search-input { width: 100%; }
+.dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 40;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  display: none;
+  max-height: 420px;
+  overflow-y: auto;
+}
+.dropdown.open { display: block; }
+
+.suggest-item, .preview-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 11px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.suggest-item:hover, .suggest-item.hover,
+.preview-item:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.suggest-item .st-type { margin-left: auto; color: var(--muted); font-size: 11px; white-space: nowrap; }
+.dropdown-empty { padding: 10px 12px; color: var(--muted); font-size: 13px; }
+
+.preview-item { align-items: flex-start; border-bottom: 1px solid var(--line); }
+.preview-item:last-child { border-bottom: none; }
+.preview-item .pv-thumb { width: 42px; aspect-ratio: 3/4; object-fit: cover; border-radius: 6px; background: var(--line); flex: none; }
+.preview-item .pv-body { min-width: 0; }
+.preview-item .pv-title {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.3;
+  font-weight: 600;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.preview-item .pv-meta { color: var(--muted); font-size: 12px; margin-top: 3px; }
+
+/* 页脚与浮层 */
+.footer {
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: 18px 16px 40px;
+  text-align: center;
+}
+.link-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.overlay[hidden] { display: none; }
+.overlay-panel {
+  width: min(880px, 100%);
+  max-height: 80vh;
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+.overlay-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+
 /* 骨架 */
 .skeleton {
   background: linear-gradient(90deg, var(--line) 25%, color-mix(in srgb, var(--panel) 40%, var(--line)) 37%, var(--line) 63%);
@@ -316,6 +406,6 @@ a { color: inherit; }
 
 @media (max-width: 560px) {
   .cover { width: 200px; }
-  .tag-find { width: 100%; }
+  .search-input-wrap { width: 100%; }
   .grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
 }

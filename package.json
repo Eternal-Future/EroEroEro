@@ -1,9 +1,9 @@
 {
   "name": "eroeroero",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "EroEroEro — minimal comic search/proxy app. First source: nhentai.",
+  "description": "Ero³ — minimal aggregator comic search/proxy app. First source: nhentai (nh).",
   "scripts": {
     "build:assets": "node scripts/build-assets.mjs",
     "build": "node scripts/build-assets.mjs && esbuild src/node.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/server.mjs",

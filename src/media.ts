@@ -1,5 +1,4 @@
-import { getCdnConfig } from "./nhentai";
-import type { CdnConfig } from "./types";
+import { USER_AGENT } from "./env";
 
 export type MediaKind = "image" | "thumb";
 
@@ -7,12 +6,6 @@ const SAFE_PATH = /^galleries\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
 export function isValidMediaPath(path: string): boolean {
   return SAFE_PATH.test(path) && !path.includes("..");
-}
-
-function serversFor(cfg: CdnConfig, kind: MediaKind): string[] {
-  return (kind === "image" ? cfg.image_servers : cfg.thumb_servers).map((s) =>
-    s.replace(/\/+$/, ""),
-  );
 }
 
 function startIndex(path: string, len: number): number {
@@ -35,27 +28,30 @@ export interface FetchedMedia {
 }
 
 export interface FetchMediaOptions {
-  /** Try this server origin (e.g. https://i2.nhentai.net) first for connection reuse. */
+  /** Try this server origin first for connection reuse during a long download. */
   preferredServer?: string;
   timeoutMs?: number;
 }
 
-/** Fetch a media path, trying every CDN server before giving up. */
+/**
+ * Fetch a media path from source-provided CDN servers, trying every server
+ * before giving up. Server discovery lives in the source adapter, so this
+ * stays source-agnostic.
+ */
 export async function fetchMedia(
   path: string,
-  kind: MediaKind,
+  servers: string[],
   opts: FetchMediaOptions = {},
 ): Promise<FetchedMedia> {
   if (!isValidMediaPath(path)) throw new Error(`invalid media path: ${path}`);
   const timeoutMs = opts.timeoutMs ?? 12000;
-  const cfg = await getCdnConfig();
-  const servers = serversFor(cfg, kind);
-  if (servers.length === 0) throw new Error("no media servers configured");
+  const cleaned = servers.map((s) => s.replace(/\/+$/, ""));
+  if (cleaned.length === 0) throw new Error("no media servers configured");
 
   // Put the preferred server first so a whole download reuses one connection.
   const ordered = opts.preferredServer
-    ? [opts.preferredServer, ...servers.filter((s) => s !== opts.preferredServer)]
-    : servers;
+    ? [opts.preferredServer, ...cleaned.filter((s) => s !== opts.preferredServer)]
+    : cleaned;
 
   let lastError: unknown = new Error("all media servers failed");
   const start = opts.preferredServer ? 0 : startIndex(path, ordered.length);
@@ -67,7 +63,7 @@ export async function fetchMedia(
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await fetch(url, {
-        headers: { "User-Agent": "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36" },
+        headers: { "User-Agent": USER_AGENT },
         signal: controller.signal,
         redirect: "follow",
       });
@@ -85,9 +81,9 @@ export async function fetchMedia(
 /** Fetch and fully buffer a media file (used for single-image preview). */
 export async function fetchMediaBuffer(
   path: string,
-  kind: MediaKind,
+  servers: string[],
 ): Promise<{ data: Uint8Array; contentType: string; url: string }> {
-  const { response, url } = await fetchMedia(path, kind);
+  const { response, url } = await fetchMedia(path, servers);
   const data = new Uint8Array(await response.arrayBuffer());
   const contentType = response.headers.get("content-type") ?? contentTypeFor(path);
   return { data, contentType, url };

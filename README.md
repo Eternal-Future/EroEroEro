@@ -1,15 +1,17 @@
-# EroEroEro ☕
+# Ero³ ☕
 
-极简漫画搜索网页。所有请求都经过本项目代理（**不直连、不 302**），前端只与本站后端交互。
+极简聚合漫画搜索网页。所有请求都经过本项目代理（**不直连、不 302**），前端只与本站后端交互，后端按 **source（渠道）** 组织，便于后续扩展更多来源。
 
-当前唯一源：**nhentai**（已迁移到其 `/api/v2`）。
+当前 source：`nh` = **nhentai**（已迁移到其 `/api/v2`）。
 
 ## 功能
 
 - 关键词搜索（标题），并透传 nhentai 的搜索语法：`tag:"big breasts"`、`artist:name`、`-word`、`pages:>10` 等
-- 按标签浏览 / 搜索（标签类型 Tab + 标签联想）
+- 渠道标签语法：`tag:nh_<tag>` 会出现该渠道的标签自动建议（最多 5 条），例如 `tag:nh_only` → `males only` / `females only`
+- 渠道命名标签：`nh:<tag>`（如 `nh:males only`）直接按名字搜索该标签；页脚进入"点击查看所有标签"，所有标签以 `<渠道>:<tag>` 展示
+- 搜索预览：搜索框停下 2 秒未输入时，输入框下方展示前 5 条结果，点击直接进入画廊
 - 在线预览（阅读器，方向键翻页）
-- 下载：后端**实时抓取每页图片并流式打包成 ZIP** 传回客户端（STORE 无重压缩，图片本身已压缩）
+- 下载：后端**实时抓取每页图片并流式打包成 ZIP** 直推浏览器（无固定 Content-Length，浏览器下载管理器直接落盘；前端不缓冲、不打包）
 - 极简 UI，浅色 / 深色自适应
 
 ## 本地运行
@@ -30,8 +32,8 @@ npm start
 ## Docker 部署
 
 ```bash
-docker build -t eroeroero .
-docker run --rm -p 8787:8787 eroeroero
+docker build -t ero3 .
+docker run --rm -p 8787:8787 ero3
 ```
 
 ## Cloudflare Workers 部署
@@ -66,30 +68,33 @@ vercel
 | `PORT` | 本地/容器监听端口 | `8787` |
 | `NHENTAI_BASE` | nhentai API 基地址 | `https://nhentai.net` |
 | `NHENTAI_API_KEY` | nhentai User API Key，提高限流（`Authorization: Key ...`），可选 | 无（匿名） |
-| `NHENTAI_USER_AGENT` | 请求 UA，可选 | `EroEroEro/0.1 (https://github.com/...)` |
+| `NHENTAI_USER_AGENT` | 请求 UA，可选。可保持默认，也可配置为 `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36` | `EroEroEro/0.1 (https://github.com/Eternal-Future/EroEroEro)` |
 
 > 匿名限流参考（单个 IP）：搜索 10/min、详情 20/min、按标签 15/min。图片走 CDN（`i*` / `t*`）无该 API 限流，且失败会自动切换其它 CDN 节点。
 
-## API（本项目自用，也可直接调用）
+## API（source 明确区分，便于扩展）
 
-- `GET /api/search?q=...&sort=...&page=...&tag_id=...`
-- `GET /api/gallery/:id`
-- `GET /api/tags?q=...&limit=...`（标签联想）
-- `GET /api/tags/browse?type=...&page=...`
-- `GET /api/img?path=...&kind=image|thumb`（图片代理）
-- `GET /api/download/:id`（流式 ZIP）
-- `GET /api/health`
+统一前缀 `/api/source/:source`，`source` 当前支持 `nh` 或 `nhentai`。
+
+- `GET /api/source/:source/search?q=...&tag=...&tag_id=...&sort=...&page=...`
+- `GET /api/source/:source/gallery/:id`
+- `GET /api/source/:source/tags?q=...&limit=...&type=...`（标签自动建议，含子串回退匹配）
+- `GET /api/source/:source/tags/browse?type=...&page=...&sort=...`
+- `GET /api/source/:source/img?path=...&kind=image|thumb`（图片代理）
+- `GET /api/source/:source/download/:id`（流式 ZIP，无固定长度）
+- `GET /api/health`、`GET /api/sources`
 
 ## 目录结构
 
 ```
-src/         后端（Hono，跨 Node / Workers / Vercel）
-  app.ts     路由与静态托管
-  nhentai.ts nhentai /api/v2 客户端 + 内存缓存
-  media.ts   CDN 图片代理（多节点故障切换）
-  zip.ts     流式 ZIP writer
-  assets.ts  前端内联产物（由 scripts/build-assets.mjs 生成）
-public/      前端源码（HTML/CSS/JS）
-scripts/     构建脚本
-api/         Vercel 函数入口
+src/              后端（Hono，跨 Node / Workers / Vercel）
+  app.ts          路由与静态托管（按 source 分发）
+  sources.ts      渠道抽象层：SourceAdapter 接口 + 渠道注册表，未来加源只需实现适配器
+  nhentai.ts      nh 渠道实现（nhentai /api/v2 客户端 + 内存缓存）
+  media.ts        CDN 图片代理（多节点故障切换，渠道无关）
+  zip.ts          流式 ZIP writer
+  assets.ts       前端内联产物（由 scripts/build-assets.mjs 生成）
+public/           前端源码（HTML/CSS/JS）
+scripts/          构建脚本
+api/              Vercel 函数入口
 ```
