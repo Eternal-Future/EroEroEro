@@ -6,6 +6,8 @@ import { NhentaiError } from "./nhentai";
 import { EhError } from "./ehentai";
 import { getCachedImage, imageCacheKey, putCachedImage } from "./imageCache";
 import { maybeInitEhStore } from "./ehstore";
+import { aggregateSearch } from "./query";
+import { getNhPublishDate } from "./nhDates";
 import {
   buildMediaUrl,
   getSource,
@@ -106,28 +108,58 @@ app.get("/api/source/:source/search", async (c) => {
   const tagId = c.req.query("tag_id");
   const tagName = c.req.query("tag") ?? undefined;
   const page = positiveInt(c.req.query("page"), 1);
+  const key = authKey(c);
 
-  // "all" = aggregated home feed (currently nh + eh)
+  const sourceOf = (it: { variant?: string }) =>
+    it.variant === "exh" || it.variant === "eh" ? "eh" : "nh";
+
+  const formatItems = (items: Array<any>) =>
+    items.map((it) => ({
+      ...it,
+      source: sourceOf(it),
+      thumb: it.thumb?.path
+        ? buildMediaUrl(sourceOf(it), it.thumb.path, it.thumb.kind)
+        : "",
+    }));
+
+  // Multi-keyword / OR / cross-source query engine:
+  //   space = AND, `&` = OR, quoted tag names supported (`eh:"male only"`).
+  if (query) {
+    const scope = requested === "all" ? undefined : [requested];
+    const data = await aggregateSearch(query, page, key, scope);
+    return c.json({
+      source: requested,
+      items: formatItems(data.items),
+      page,
+      num_pages: data.num_pages,
+      per_page: data.per_page,
+      total: data.total,
+    });
+  }
+
+  // "all" = aggregated home feed, sorted by real publish time descending.
+  // NH has no publish time in list responses, so we hydrate from cache/detail.
   if (requested === "all") {
     const nh = getSource("nh")!;
     const eh = getSource("eh")!;
     const [a, b] = await Promise.allSettled([
-      nh.search({ query, tagId, tagName, sort: c.req.query("sort"), page, key: authKey(c) }),
-      eh.search({ query, tagId, tagName, sort: c.req.query("sort"), page, key: authKey(c) }),
+      nh.search({ query, tagId, tagName, sort: c.req.query("sort"), page, key }),
+      eh.search({ query, tagId, tagName, sort: c.req.query("sort"), page, key }),
     ]);
     const items = [
       ...(a.status === "fulfilled" ? a.value.items : []),
       ...(b.status === "fulfilled" ? b.value.items : []),
     ];
+
+    const nhItems = items.filter((it) => sourceOf(it) === "nh");
+    await mapLimit(nhItems, 5, async (it) => {
+      it.published = await getNhPublishDate(it.id, key);
+    });
+    items.sort((x, y) => (y.published ?? 0) - (x.published ?? 0));
+
     return c.json({
       source: "all",
-      items: items.map((it) => ({
-        ...it,
-        source: it.variant === "exh" || it.variant === "eh" ? "eh" : "nh",
-        thumb: (it.thumb?.path
-          ? buildMediaUrl(it.variant === "exh" || it.variant === "eh" ? "eh" : "nh", it.thumb.path, it.thumb.kind)
-          : ""),
-      })),
+      items: formatItems(items),
       page,
       num_pages: Math.max(
         a.status === "fulfilled" ? a.value.num_pages : 1,
@@ -145,7 +177,7 @@ app.get("/api/source/:source/search", async (c) => {
     tagName,
     sort: c.req.query("sort"),
     page,
-    key: authKey(c),
+    key,
   });
 
   return c.json({
@@ -410,6 +442,25 @@ const fetchPagesBuffered = async function* (
     yield { name: nameFor(pages[i]), open: async () => data };
   }
 };
+
+async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= items.length) return;
+      out[i] = await fn(items[i]);
+    }
+  };
+  const threads = Math.min(limit, items.length);
+  await Promise.all(Array.from({ length: threads }, worker));
+  return out;
+}
 
 function sanitize(value: string): string {
   return value
