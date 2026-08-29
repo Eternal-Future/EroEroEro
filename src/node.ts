@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { serve } from "@hono/node-server";
 import { app } from "./app";
 import { installEhNodeBridge } from "./ehentai-node";
+import { enableDebug } from "./debug";
 
 function loadDotEnv(): void {
   const proc = (globalThis as any).process;
@@ -31,9 +32,15 @@ function loadDotEnv(): void {
 }
 
 loadDotEnv();
+
+const proc = (globalThis as any).process;
+if (proc?.argv?.includes("--debug") || proc?.env?.ERO3_DEBUG === "1") {
+  enableDebug();
+}
+
 installEhNodeBridge();
 
 const port = Number((globalThis as any).process?.env?.PORT ?? 8787);
 
-console.log(`[Ero³] listening on http://localhost:${port}`);
+console.log(`[Ero³] listening on http://localhost:${port}${proc?.argv?.includes("--debug") ? " (debug)" : ""}`);
 serve({ fetch: app.fetch, port });

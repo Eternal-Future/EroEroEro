@@ -75,7 +75,7 @@
 
   const state = {
     view: "search",
-    source: "nh",
+    source: "all",
     theme: readTheme(),
     query: "",
     sort: "date",
@@ -244,7 +244,7 @@
     const frag = document.createDocumentFragment();
     for (const it of items) {
       const a = el("a", "card");
-      a.href = `#/g/${state.source}/${it.id}`;
+      a.href = `#/g/${it.source || state.source}/${it.id}`;
       a.setAttribute("aria-label", it.title);
 
       const img = document.createElement("img");

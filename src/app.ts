@@ -91,11 +91,42 @@ app.get("/api/sources", (c) => c.json({ sources: listSources() }));
 // Search (keyword, tag, or home feed)
 // ---------------------------------------------------------------------------
 app.get("/api/source/:source/search", async (c) => {
-  const adapter = src(c);
+  const requested = c.req.param("source").toLowerCase();
   const query = c.req.query("q") ?? "";
   const tagId = c.req.query("tag_id");
   const tagName = c.req.query("tag") ?? undefined;
   const page = positiveInt(c.req.query("page"), 1);
+
+  // "all" = aggregated home feed (currently nh + eh)
+  if (requested === "all") {
+    const nh = getSource("nh")!;
+    const eh = getSource("eh")!;
+    const [a, b] = await Promise.allSettled([
+      nh.search({ query, tagId, tagName, sort: c.req.query("sort"), page, key: authKey(c) }),
+      eh.search({ query, tagId, tagName, sort: c.req.query("sort"), page, key: authKey(c) }),
+    ]);
+    const items = [
+      ...(a.status === "fulfilled" ? a.value.items : []),
+      ...(b.status === "fulfilled" ? b.value.items : []),
+    ];
+    return c.json({
+      source: "all",
+      items: items.map((it) => ({
+        ...it,
+        source: it.variant === "exh" || it.variant === "eh" ? "eh" : "nh",
+        thumb: buildMediaUrl(it.variant === "exh" || it.variant === "eh" ? "eh" : "nh", it.thumb.path, it.thumb.kind),
+      })),
+      page,
+      num_pages: Math.max(
+        a.status === "fulfilled" ? a.value.num_pages : 1,
+        b.status === "fulfilled" ? b.value.num_pages : 1,
+      ),
+      per_page: 25,
+      total: null,
+    });
+  }
+
+  const adapter = src(c);
   const data = await adapter.search({
     query,
     tagId,
@@ -109,6 +140,7 @@ app.get("/api/source/:source/search", async (c) => {
     source: adapter.id,
     items: data.items.map((it) => ({
       ...it,
+      source: adapter.id,
       thumb: buildMediaUrl(adapter.id, it.thumb.path, it.thumb.kind),
     })),
     page,

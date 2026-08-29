@@ -1,4 +1,5 @@
 import { USER_AGENT } from "./env";
+import { debugLog } from "./debug";
 import { ehGet, ehPut } from "./ehstore";
 import type {
   NormalizedGallery,
@@ -112,9 +113,14 @@ function cookieFor(mode: "exh" | "eh"): string {
 
 async function acquireIgneous(): Promise<string | null> {
   const cookie = baseCookie();
-  if (!cookie) return null;
+  if (!cookie) {
+    debugLog("[eh] acquireIgneous: no EHENTAI_COOKIE configured");
+    return null;
+  }
 
-  const res = await (acquireFetcher ?? fetch)(`https://exhentai.org/?_=${Date.now()}`, {
+  const url = `https://exhentai.org/?_=${Date.now()}`;
+  debugLog("[eh] acquireIgneous: fetching", url, "via", acquireFetcher ? "proxy" : "direct");
+  const res = await (acquireFetcher ?? fetch)(url, {
     headers: { "User-Agent": USER_AGENT, Cookie: cookie },
   });
   const setCookies = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
@@ -122,6 +128,7 @@ async function acquireIgneous(): Promise<string | null> {
   const all = setCookies.length ? setCookies.join("; ") : headerCookie;
   const m = all.match(/igneous=([^;]+)/);
   const ig = m ? m[1].trim() : "";
+  debugLog("[eh] acquireIgneous: status", res.status, "igneous", ig ? `${ig.slice(0, 4)}...` : "(none)");
   if (ig && ig.toLowerCase() !== "mystery") {
     await saveState({ igneous: ig, blocked: false, at: Date.now() });
     return ig;
@@ -139,6 +146,7 @@ async function tryExh(path: string): Promise<string | null> {
   }
 
   const url = `https://exhentai.org${path}`;
+  debugLog("[eh] tryExh", path);
   try {
     const res = await fetch(url, {
       headers: { "User-Agent": USER_AGENT, Cookie: cookieFor("exh") },
@@ -150,6 +158,7 @@ async function tryExh(path: string): Promise<string | null> {
   } catch (err) {
     if (err instanceof EhError) throw err;
     // network failure or igneous expired: try to refresh once
+    debugLog("[eh] tryExh failed, refreshing igneous:", err instanceof Error ? err.message : String(err));
     const ig = await acquireIgneous();
     if (!ig) throw err;
     const retry = await fetch(url, {
@@ -281,6 +290,7 @@ async function fetchListPage(
 
 export async function ehGallery(id: string): Promise<NormalizedGallery> {
   await load();
+  debugLog("[eh] gallery", id);
   // id format: "{gid}_{token}"
   const idx = id.lastIndexOf("_");
   const gid = idx >= 0 ? id.slice(0, idx) : id;
@@ -289,7 +299,10 @@ export async function ehGallery(id: string): Promise<NormalizedGallery> {
   let variant: "exh" | "eh" = "eh";
   let root: string | null = await tryExh(`/g/${gid}/${token}/`);
   if (root !== null) variant = "exh";
-  else root = await fetchEh(`/g/${gid}/${token}/`);
+  else {
+    debugLog("[eh] gallery: exhentai unavailable, using e-hentai");
+    root = await fetchEh(`/g/${gid}/${token}/`);
+  }
 
   const html = root;
   const titleRaw = html.match(/<h1 id="gn">([\s\S]*?)<\/h1>/)?.[1] ?? "";
@@ -388,7 +401,15 @@ export async function ehFetchMedia(path: string, kind: "image" | "thumb"): Promi
   await load();
   if (kind === "thumb") {
     if (!path.startsWith("https://")) throw new EhError(400, `bad eh thumb path`);
-    const res = await fetch(path, { headers: { "User-Agent": USER_AGENT } });
+    const referer = memoryState?.igneous ? "https://exhentai.org/" : "https://e-hentai.org/";
+    debugLog("[eh] fetch thumb", path.slice(0, 80));
+    const res = await fetch(path, {
+      headers: {
+        "User-Agent": USER_AGENT,
+        Referer: referer,
+        Cookie: cookieFor(memoryState?.igneous && path.includes("exhentai") ? "exh" : "eh"),
+      },
+    });
     if (!res.ok) throw new EhError(res.status, `eh thumb -> HTTP ${res.status}`);
     return { response: res };
   }
@@ -410,8 +431,14 @@ export async function ehFetchMedia(path: string, kind: "image" | "thumb"): Promi
   if (!imgUrl) throw new EhError(502, "could not find image url in viewer page");
   if (!imgUrl.startsWith("https://")) throw new EhError(502, `bad image url: ${imgUrl}`);
 
+  const base = variant === "exh" ? "https://exhentai.org" : "https://e-hentai.org";
+  debugLog("[eh] fetch page", base + viewerPath, "->", imgUrl.slice(0, 90));
   const res = await fetch(imgUrl, {
-    headers: { "User-Agent": USER_AGENT, Cookie: cookieFor(variant) },
+    headers: {
+      "User-Agent": USER_AGENT,
+      Referer: base + viewerPath,
+      Cookie: cookieFor(variant),
+    },
   });
   if (!res.ok) throw new EhError(res.status, `eh image -> HTTP ${res.status}`);
   return { response: res };
