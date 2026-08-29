@@ -1,7 +1,7 @@
 import { getSource, type NormalizedListItem, type NormalizedSearchResult } from "./sources";
 import { ehCanonicalTagsFor } from "./ehtags";
 
-type SrcTag = { source: string; value: string; quoted: boolean };
+type SrcTag = { source: string; value: string; quoted: boolean; negative: boolean };
 
 interface Branch {
   tags: SrcTag[];
@@ -20,7 +20,7 @@ const SOURCE_ALIASES: Record<string, string> = {
   "18comic": "jm",
 };
 
-const TAG_RE = /(nh|eh|jm|nhentai|ehentai|exhentai|jmcomic|18comic):(?:"([^"]+)"|([^\s&]+))/gi;
+const TAG_RE = /(-)?(nh|eh|jm|nhentai|ehentai|exhentai|jmcomic|18comic):(?:"([^"]+)"|([^\s&]+))/gi;
 
 function canonicalSource(rawAlias: string): string {
   return SOURCE_ALIASES[rawAlias.toLowerCase()] ?? rawAlias.toLowerCase();
@@ -38,9 +38,10 @@ export function parseBranches(raw: string): Branch[] {
       for (const m of part.matchAll(TAG_RE)) {
         const before = part.slice(last, m.index);
         if (before.trim()) leftover.push(before.trim());
-        const quoted = m[2] !== undefined;
-        const value = m[2] ?? m[3];
-        tags.push({ source: canonicalSource(m[1]), value, quoted });
+        const negative = m[1] === "-";
+        const quoted = m[3] !== undefined;
+        const value = m[3] ?? m[4];
+        tags.push({ source: canonicalSource(m[2]), value, quoted, negative });
         last = m.index + m[0].length;
       }
       const tail = part.slice(last);
@@ -54,26 +55,37 @@ async function branchItems(
   page: number,
   key: string | undefined,
   defaultSources: string[],
+  globalNegatives: Map<string, string[]>,
 ): Promise<{ items: NormalizedListItem[]; num_pages: number }> {
   // Quoted `source:"term"` is a scoped keyword search (good for titles).
-  // Unquoted `source:term` keeps the tag semantics the user described.
-  const tagsBySource = new Map<string, string[]>();
+  // Unquoted `source:term` keeps tag semantics; `-source:term` filters.
+  const positiveTags = new Map<string, string[]>();
+  const negativeTags = new Map<string, string[]>();
   const keywordScopes = new Map<string, string[]>();
   const keywords = [...branch.keywords];
 
   for (const t of branch.tags) {
     if (t.quoted) {
       const list = keywordScopes.get(t.source) ?? [];
+      if (t.negative) throw new Error("negative quoted terms are not supported");
       list.push(t.value);
       keywordScopes.set(t.source, list);
-    } else {
-      const list = tagsBySource.get(t.source) ?? [];
+    } else if (t.negative) {
+      const list = negativeTags.get(t.source) ?? [];
       list.push(t.value);
-      tagsBySource.set(t.source, list);
+      negativeTags.set(t.source, list);
+    } else {
+      const list = positiveTags.get(t.source) ?? [];
+      list.push(t.value);
+      positiveTags.set(t.source, list);
     }
   }
 
-  const mentioned = new Set([...tagsBySource.keys(), ...keywordScopes.keys()]);
+  for (const [src, list] of globalNegatives) {
+    negativeTags.set(src, [...(negativeTags.get(src) ?? []), ...list]);
+  }
+
+  const mentioned = new Set([...positiveTags.keys(), ...keywordScopes.keys()]);
   const sources = mentioned.size ? [...mentioned] : defaultSources;
 
   const results = await Promise.all(
@@ -81,15 +93,24 @@ async function branchItems(
       const adapter = getSource(source);
       if (!adapter) return { items: [] as NormalizedListItem[], num_pages: 1 };
       const qParts = [...keywords, ...(keywordScopes.get(source) ?? [])];
-      for (const rawTag of tagsBySource.get(source) ?? []) {
+      for (const rawTag of positiveTags.get(source) ?? []) {
         if (adapter.id === "eh") {
           const canonical = await ehCanonicalTagsFor(rawTag, 1);
           qParts.push(canonical[0] ?? rawTag);
         } else if (adapter.id === "jm") {
-          // jm has no tag semantics: every <jm:xxx> term is a keyword.
           qParts.push(rawTag);
         } else {
           qParts.push(`tag:"${rawTag.replace(/"/g, "")}"`);
+        }
+      }
+      for (const rawNeg of negativeTags.get(source) ?? []) {
+        if (adapter.id === "eh") {
+          const canonical = await ehCanonicalTagsFor(rawNeg, 1);
+          qParts.push(`-${canonical[0] ?? rawNeg}`);
+        } else if (adapter.id === "jm") {
+          // jm does not support tag filters; ignore.
+        } else {
+          qParts.push(`-tag:"${rawNeg.replace(/"/g, "")}"`);
         }
       }
       const query = qParts.join(" ");
@@ -144,8 +165,18 @@ export async function aggregateSearch(
 ): Promise<NormalizedSearchResult> {
   const defaultSources = scope && scope.length ? scope : ["nh", "eh", "jm"];
   const branches = parseBranches(raw);
+  const globalNegatives = new Map<string, string[]>();
+  for (const branch of branches) {
+    branch.tags = branch.tags.filter((t) => {
+      if (!t.negative) return true;
+      const list = globalNegatives.get(t.source) ?? [];
+      list.push(t.value);
+      globalNegatives.set(t.source, list);
+      return false;
+    });
+  }
   const all = await Promise.all(
-    branches.map((b) => branchItems(b, page, key, defaultSources)),
+    branches.map((b) => branchItems(b, page, key, defaultSources, globalNegatives)),
   );
   const items = dedupe(interleave(all.map((b) => b.items)).slice(0, 50));
   const numPages = Math.max(1, ...all.map((b) => b.num_pages));
