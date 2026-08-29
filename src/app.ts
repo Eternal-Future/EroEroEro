@@ -341,10 +341,10 @@ app.get("/api/source/:source/download/:id", async (c) => {
     const base = path.split("/").pop() ?? "";
     const dot = base.lastIndexOf(".");
     const e = dot >= 0 ? base.slice(dot + 1).toLowerCase() : "";
-    return e || "img";
+    return e || "webp";
   };
   const pageName = (p: NormalizedPage) =>
-    `${folder}/${String(p.number).padStart(4, "0")}.${ext(p.path)}`;
+    `${String(p.number).padStart(4, "0")}.${ext(p.path)}`;
 
   const fetchPage = async (p: NormalizedPage, preferred?: string) => {
     try {
@@ -363,7 +363,7 @@ app.get("/api/source/:source/download/:id", async (c) => {
 
   const entries = (async function* () {
     yield {
-      name: `${folder}/meta.json`,
+      name: "meta.json",
       open: async () => new TextEncoder().encode(meta) as Uint8Array,
     };
     yield* fetchPagesBuffered(g.pages, 4, pageName, fetchPage);
