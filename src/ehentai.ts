@@ -337,9 +337,10 @@ export async function ehGallery(id: string): Promise<NormalizedGallery> {
 
   const html = root;
   const titleRaw = html.match(/<h1 id="gn">([\s\S]*?)<\/h1>/)?.[1] ?? "";
-  const title = stripTags(titleRaw) || `#${gid}`;
+  const english = stripTags(titleRaw) || `#${gid}`;
   const jpRaw = html.match(/<h1 id="gj">([\s\S]*?)<\/h1>/)?.[1] ?? "";
   const japanese = stripTags(jpRaw) || null;
+  const title = japanese || english;
 
   const coverRaw =
     html.match(/background:transparent url\(([^)]+)\)/)?.slice(1, 2).find((u) => u.startsWith("https")) ?? "";
@@ -388,7 +389,7 @@ export async function ehGallery(id: string): Promise<NormalizedGallery> {
   return {
     id,
     title,
-    japanese_title: japanese,
+    japanese_title: japanese ? english : null,
     pretty: title,
     scanlator: "",
     upload_date: uploaded,

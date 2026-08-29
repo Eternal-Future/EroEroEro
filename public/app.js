@@ -744,10 +744,10 @@
     els.form.addEventListener("submit", (e) => {
       e.preventDefault();
       const v = els.q.value.trim();
-      const m = v.match(/^([A-Za-z0-9]+):(.+)$/);
-      // "<channel>:<tag>" (channel naming) -> search that tag by name.
-      if (m && SOURCES[m[1]]) {
-        selectTagByName(m[2].trim(), m[1]);
+      const single = v.match(/^([A-Za-z0-9]+):([^\s&"]+)$/);
+      // "<channel>:<tag>" with no spaces/quotes/& -> search that single tag by name.
+      if (single && SOURCES[single[1]]) {
+        selectTagByName(single[2], single[1]);
         return;
       }
       state.query = v;

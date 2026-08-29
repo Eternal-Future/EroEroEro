@@ -150,10 +150,12 @@ const nhAdapter: SourceAdapter = {
 
   async gallery(id, key) {
     const g = await getGallery(Number(id), key);
+    const en = g.title.english || g.title.pretty || `#${g.id}`;
+    const jp = g.title.japanese ?? null;
     return {
       id: g.id,
-      title: g.title.english || g.title.pretty || `#${g.id}`,
-      japanese_title: g.title.japanese,
+      title: jp || en,
+      japanese_title: jp ? en : null,
       pretty: g.title.pretty,
       scanlator: g.scanlator ?? "",
       upload_date: g.upload_date,
