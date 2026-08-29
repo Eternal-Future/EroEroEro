@@ -16,7 +16,7 @@
 - 首页为全渠道混合流，按各画廊发布时间从新到旧排序。
 - 关键词搜索；也透传 nhentai 语法：`tag:"big breasts"`、`artist:name`、`-word`、`pages:>10` 等。
 - 渠道标签：
-  - 输入 `nh:only` / `eh:巨乳` 有标签自动建议（最多 5 条，EH 走 EhTagTranslation 中文本地化数据）。
+  - 输入标签有标签自动建议（最多 5 条，EH 走 EhTagTranslation 中文本地化数据）。
   - 点击建议或标签页脚浮层可精确按标签搜索。
   - `nh:<tag>`、`eh:<tag>` 也可直接手输。
 - 多关键词 / 跨渠道搜索：
