@@ -1,47 +1,49 @@
 // Node-only e-hentai bridges: HTTP proxy support for igneous acquisition and
-// a local file that reliably persists the acquired igneous value. This file is
-// NEVER imported by the Workers/Vercel entries, so the serverless graph stays
-// free of Node built-ins.
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+// local SQLite persistence for igneous / tag index data. This file is NEVER
+// imported by the Workers/Vercel entries, so the serverless graph stays free
+// of Node built-ins.
+import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { ProxyAgent } from "undici";
-import {
-  setEhAcquireFetcher,
-  setEhPersistBridge,
-  type EhPersistState,
-} from "./ehentai";
-
-interface PersistBridge {
-  readState(): Promise<EhPersistState | null>;
-  writeState(state: EhPersistState): Promise<void>;
-}
+import { setEhAcquireFetcher } from "./ehentai";
+import { setEhStore } from "./ehstore";
 
 export function installEhNodeBridge(): void {
   const proc = (globalThis as any).process;
-  const stateFile = proc?.env?.EHENTAI_STATE_FILE ?? "eh-state.json";
   const dataDir = proc?.env?.EHENTAI_STATE_DIR ?? ".data";
-  const statePath = join(proc.cwd(), dataDir, stateFile.replace(/^\.data\//, ""));
+  const sqliteFile = proc?.env?.EHENTAI_SQLITE_FILE ?? "eh.sqlite";
+  const base = join(proc.cwd(), dataDir);
+  const dbPath = join(base, sqliteFile.replace(/^\.data\//, ""));
+  mkdirSync(dirname(dbPath), { recursive: true });
 
-  const bridge: PersistBridge = {
-    async readState() {
+  const sqlite = new DatabaseSync(dbPath);
+  sqlite.exec(
+    "CREATE TABLE IF NOT EXISTS eh_kv (k TEXT PRIMARY KEY, v TEXT NOT NULL, updated_at INTEGER)",
+  );
+  setEhStore({
+    async get(key) {
       try {
-        const raw = await readFile(statePath, "utf8");
-        return JSON.parse(raw) as EhPersistState;
+        const row = sqlite.prepare("SELECT v FROM eh_kv WHERE k = ?").get(key) as
+          | { v: string }
+          | undefined;
+        return row?.v ?? null;
       } catch {
         return null;
       }
     },
-    async writeState(state) {
+    async put(key, value) {
       try {
-        await mkdir(dirname(statePath), { recursive: true });
-        await writeFile(statePath, JSON.stringify(state), "utf8");
+        sqlite
+          .prepare(
+            "INSERT INTO eh_kv (k, v, updated_at) VALUES (?, ?, strftime('%s','now')) ON CONFLICT(k) DO UPDATE SET v = excluded.v, updated_at = excluded.updated_at",
+          )
+          .run(key, value);
       } catch {
-        // persisting is best-effort
+        // best effort
       }
     },
-  };
-
-  setEhPersistBridge(bridge);
+  });
 
   const proxy = proc?.env?.EHENTAI_IGNEOUS_PROXY;
   if (proxy) {

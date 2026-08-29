@@ -1,4 +1,5 @@
 import { USER_AGENT } from "./env";
+import { ehGet, ehPut } from "./ehstore";
 import type {
   NormalizedGallery,
   NormalizedListItem,
@@ -69,6 +70,12 @@ async function load(): Promise<EhPersistState | null> {
       memoryState = null;
     }
   }
+  try {
+    const raw = await ehGet("eh_state");
+    if (!memoryState && raw) memoryState = JSON.parse(raw) as EhPersistState;
+  } catch {
+    // storage unavailable; fall back to memory/env
+  }
   const override = env("EHENTAI_IGNEOUS");
   if (override) {
     memoryState = { igneous: override, blocked: false, at: Date.now() };
@@ -84,6 +91,11 @@ async function saveState(state: EhPersistState): Promise<void> {
     } catch {
       // best effort
     }
+  }
+  try {
+    await ehPut("eh_state", JSON.stringify(state));
+  } catch {
+    // best effort
   }
 }
 

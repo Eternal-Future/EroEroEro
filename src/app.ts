@@ -4,6 +4,7 @@ import { getEnv } from "./env";
 import { NhentaiError } from "./nhentai";
 import { EhError } from "./ehentai";
 import { getCachedImage, imageCacheKey, putCachedImage } from "./imageCache";
+import { maybeInitEhStore } from "./ehstore";
 import {
   buildMediaUrl,
   getSource,
@@ -20,6 +21,7 @@ export const app = new Hono();
 // `/img` route sets its own cache headers and is skipped below because it
 // always provides a Cache-Control header.
 app.use("*", async (c, next) => {
+  await maybeInitEhStore(c.env);
   await next();
   if (!c.res.headers.has("Cache-Control")) {
     c.res.headers.set("Cache-Control", "no-store");

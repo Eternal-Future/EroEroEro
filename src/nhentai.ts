@@ -116,7 +116,7 @@ export async function getGallery(id: number, key?: string): Promise<GalleryDetai
   return detail;
 }
 
-async function rawSearchTags(
+export async function rawSearchTags(
   query: string,
   limit = 8,
   type?: string,

@@ -3,5 +3,14 @@ main = "src/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
+# Workers persistence for e-hentai igneous + tag DB.
+# Create the D1 database first, then uncomment and deploy:
+# npx wrangler d1 create ero3
+# [[d1_databases]]
+# binding = "EH_D1"
+# database_name = "ero3"
+# database_id = "<your-database-id>"
+# Schema is created automatically by the app on first request.
+
 [observability]
 enabled = true

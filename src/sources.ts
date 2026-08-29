@@ -2,12 +2,14 @@ import {
   browseTags,
   getCdnConfig,
   getGallery,
+  rawSearchTags,
   searchGalleries,
   searchTags,
   translateNhQuery,
 } from "./nhentai";
 import { fetchMedia as fetchMediaWithServers, serverOrigin } from "./media";
-import { searchEh, ehGallery, ehTags, ehFetchMedia, ehBrowseTags } from "./ehentai";
+import { searchEh, ehGallery, ehFetchMedia, ehBrowseTags } from "./ehentai";
+import { suggestEhTags, ehKeysForLocalizedQuery } from "./ehtags";
 import type { SortOrder } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -178,14 +180,32 @@ const nhAdapter: SourceAdapter = {
   },
 
   async tags(query, limit, type) {
-    const tags = await searchTags(query, limit, type);
-    return tags.map((t) => ({
-      id: t.id,
-      type: t.type,
-      name: t.name,
-      slug: t.slug,
-      count: t.count,
-    }));
+    const tags: NormalizedTag[] = [];
+    const seen = new Set<string>();
+    const push = (t: { id: number | string; type: string; name: string; slug?: string; count?: number }) => {
+      const key = `${t.type}:${t.id}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      tags.push(t);
+    };
+    for (const t of await searchTags(query, limit, type)) push(t);
+
+    // If nhentai's own prefix search had room, reuse EhTagTranslation keys:
+    // a Chinese (or other localized) query matches an EH tag, then we resolve
+    // that tag's canonical name against nhentai to keep the real tag id.
+    if (tags.length < limit) {
+      try {
+        const keys = await ehKeysForLocalizedQuery(query, limit * 2);
+        for (const key of keys) {
+          if (tags.length >= limit) break;
+          const direct = await rawSearchTags(key, 1);
+          for (const t of direct) push(t);
+        }
+      } catch {
+        // localization fallback is best-effort
+      }
+    }
+    return tags.slice(0, limit);
   },
 
   async browseTags(type, page, sort) {
@@ -233,7 +253,7 @@ const ehAdapter: SourceAdapter = {
   },
 
   async tags(query, limit) {
-    return ehTags(query, limit);
+    return suggestEhTags(query, limit);
   },
 
   async browseTags(type, page) {

@@ -73,13 +73,18 @@ vercel
 | `EHENTAI_COOKIE` | e-hentai 基础 Cookie（如 `ipb_member_id=...;ipb_pass_hash=...`），可选；不配则作为游客访问 E-Hentai | 无 |
 | `EHENTAI_IGNEOUS_PROXY` | 获取 exhentai `igneous` 时使用的代理 URL（Node 本地/Docker 有效，带 `user:pass@host:port` 的形式） | 无 |
 | `EHENTAI_IGNEOUS` | 手动指定已获取的 `igneous`，优先级最高；Workers/Vercel 可把 D1/KV 里的值喂到这里 | 无 |
-| `EHENTAI_STATE_FILE` | 本地持久化 igneous 的 JSON 文件路径 | `.data/eh-state.json` |
+| `EHENTAI_STATE_DIR` | 本地持久化目录（SQLite） | `.data` |
+| `EHENTAI_SQLITE_FILE` | 本地 SQLite 文件名（存 igneous + EH 标签库） | `eh.sqlite` |
+
+> `.env` 会自动加载（`node.ts` 内置解析器，Docker 本地同样支持）。模板见 `.env.example`。
+>
+> Workers 持久化：绑定 `D1` 到 `EH_D1`，建表 `eh_kv (k TEXT PRIMARY KEY, v TEXT NOT NULL, updated_at INTEGER)`；应用会自动把 igneous 和标签库写进 D1。本地写入 SQLite。
 
 > 匿名限流参考（单个 IP）：搜索 10/min、详情 20/min、按标签 15/min。图片走 CDN（`i*` / `t*`）无该 API 限流，且失败会自动切换其它 CDN 节点。
 
 ## API（source 明确区分，便于扩展）
 
-统一前缀 `/api/source/:source`，`source` 当前支持 `nh` 或 `nhentai`。
+统一前缀 `/api/source/:source`，`source` 当前支持 `nh`、`eh`（以及 `nhentai`/`ehentai`/`exhentai` 别名）。
 
 - `GET /api/source/:source/search?q=...&tag=...&tag_id=...&sort=...&page=...`
 - `GET /api/source/:source/gallery/:id`
