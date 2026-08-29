@@ -202,6 +202,9 @@ function parseList(html: string, variant: "exh" | "eh"): {
       "";
     const pagesM = row.match(/([0-9,]+)\s*pages/);
     const pages = pagesM ? Number(pagesM[1].replace(/,/g, "")) : 0;
+    const postedM = row.match(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2})/);
+    const postedTs = postedM ? new Date(postedM[1].replace(" ", "T") + ":00Z").getTime() : NaN;
+    const published = Number.isFinite(postedTs) ? Math.floor(postedTs / 1000) : undefined;
     if (!thumbRaw.startsWith("https://")) continue;
     items.push({
       id: `${g[1]}_${g[2]}`,
@@ -211,6 +214,7 @@ function parseList(html: string, variant: "exh" | "eh"): {
       favorites: 0,
       thumb: { path: thumbRaw, kind: "thumb" },
       variant,
+      published,
     });
   }
   return { items, nextCursor, total, hasNext: Boolean(nextCursor) };

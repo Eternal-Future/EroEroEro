@@ -124,7 +124,9 @@ app.get("/api/source/:source/search", async (c) => {
       items: items.map((it) => ({
         ...it,
         source: it.variant === "exh" || it.variant === "eh" ? "eh" : "nh",
-        thumb: buildMediaUrl(it.variant === "exh" || it.variant === "eh" ? "eh" : "nh", it.thumb.path, it.thumb.kind),
+        thumb: (it.thumb?.path
+          ? buildMediaUrl(it.variant === "exh" || it.variant === "eh" ? "eh" : "nh", it.thumb.path, it.thumb.kind)
+          : ""),
       })),
       page,
       num_pages: Math.max(
@@ -151,7 +153,7 @@ app.get("/api/source/:source/search", async (c) => {
     items: data.items.map((it) => ({
       ...it,
       source: adapter.id,
-      thumb: buildMediaUrl(adapter.id, it.thumb.path, it.thumb.kind),
+      thumb: it.thumb?.path ? buildMediaUrl(adapter.id, it.thumb.path, it.thumb.kind) : "",
     })),
     page,
     num_pages: data.num_pages,
@@ -180,15 +182,15 @@ app.get("/api/source/:source/gallery/:id", async (c) => {
     num_pages: g.num_pages,
     num_favorites: g.num_favorites,
     variant: g.variant ?? adapter.id,
-    cover: buildMediaUrl(adapter.id, g.cover.path, "thumb"),
-    thumb: buildMediaUrl(adapter.id, g.thumbnail.path, "thumb"),
+    cover: g.cover?.path ? buildMediaUrl(adapter.id, g.cover.path, "thumb") : "",
+    thumb: g.thumbnail?.path ? buildMediaUrl(adapter.id, g.thumbnail.path, "thumb") : "",
     tags: g.tags,
     pages: g.pages.map((p) => ({
       number: p.number,
       width: p.width,
       height: p.height,
-      img: buildMediaUrl(adapter.id, p.path, "image"),
-      thumb: buildMediaUrl(adapter.id, p.thumbnail, "thumb"),
+      img: p.path ? buildMediaUrl(adapter.id, p.path, "image") : "",
+      thumb: p.thumbnail ? buildMediaUrl(adapter.id, p.thumbnail, "thumb") : "",
     })),
   });
 });

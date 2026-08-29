@@ -32,6 +32,8 @@ export interface NormalizedListItem {
   favorites: number;
   thumb: NormalizedThumb;
   variant?: string;
+  /** Unix seconds when the gallery was published, if the source exposes it. */
+  published?: number;
 }
 
 export interface NormalizedSearchResult {

@@ -572,7 +572,8 @@
       if (token === state.detailToken) els.dCover.className = "cover";
     };
     els.dCover.className = "cover skeleton";
-    els.dCover.src = g.cover;
+    if (g.cover) els.dCover.src = g.cover;
+    else els.dCover.removeAttribute("src");
     els.dTitle.textContent = g.title;
     els.dSourceBadge.innerHTML = "";
     els.dSourceBadge.append(sourceBadge(g.variant || g.source));
