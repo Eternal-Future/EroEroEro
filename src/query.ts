@@ -116,7 +116,7 @@ export async function aggregateSearch(
   key?: string,
   scope?: string[],
 ): Promise<NormalizedSearchResult> {
-  const defaultSources = scope && scope.length ? scope : ["nh", "eh"];
+  const defaultSources = scope && scope.length ? scope : ["nh", "eh", "jm"];
   const branches = parseBranches(raw);
   const all = await Promise.all(
     branches.map((b) => branchItems(b, page, key, defaultSources)),

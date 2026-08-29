@@ -52,7 +52,7 @@
     group: "社团",
     category: "分类",
   };
-  const SOURCES = { nh: "nhentai", eh: "E-Hentai" };
+  const SOURCES = { nh: "nhentai", eh: "E-Hentai", jm: "禁漫" };
 
   const PRELOAD_DEFAULT = 5;
   function readPreloadCount() {
@@ -118,6 +118,11 @@
       const label = v === "exh" ? "ExHentai" : "E-Hentai";
       const badge = el("span", "src-badge badge-eh", v === "exh" ? "EXH" : "EH");
       badge.title = "此漫画来自于 " + label;
+      return badge;
+    }
+    if (v === "jm") {
+      const badge = el("span", "src-badge badge-jm", "JM");
+      badge.title = "此漫画来自于 禁漫";
       return badge;
     }
     const name = v === "nh" ? "NH" : String(v).toUpperCase();

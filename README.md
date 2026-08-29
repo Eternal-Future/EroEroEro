@@ -8,6 +8,7 @@
 | --- | --- | --- |
 | `nh` | nhentai | v2 API，匿名可用，可配 API Key |
 | `eh` | e-hentai / exhentai | 自动优先 EXH；igneous 失效或拿不到时回退 EH |
+| `jm` | 禁漫 / JMComic | 游客搜索+详情，响应 AES-ECB 本地解密 |
 
 ## 功能
 

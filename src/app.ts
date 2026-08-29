@@ -132,7 +132,11 @@ app.get("/api/source/:source/search", async (c) => {
   const key = authKey(c);
 
   const sourceOf = (it: { variant?: string }) =>
-    it.variant === "exh" || it.variant === "eh" ? "eh" : "nh";
+    it.variant === "exh" || it.variant === "eh"
+      ? "eh"
+      : it.variant === "jm"
+        ? "jm"
+        : "nh";
 
   const formatItems = (items: Array<any>) =>
     items.map((it) => ({
@@ -145,7 +149,8 @@ app.get("/api/source/:source/search", async (c) => {
 
   // Multi-keyword / OR / cross-source query engine:
   //   space = AND, `&` = OR, quoted tag names supported (`eh:"male only"`).
-  if (query) {
+  const crossSyntax = /&|(\b(nh|eh|jm|nhentai|ehentai|e-hentai|exhentai|jmcomic|18comic):)/i;
+  if (query && (requested === "all" || crossSyntax.test(query))) {
     const scope = requested === "all" ? undefined : [requested];
     const data = await aggregateSearch(query, page, key, scope);
     await enrichEhTitles(data.items);
@@ -164,13 +169,16 @@ app.get("/api/source/:source/search", async (c) => {
   if (requested === "all") {
     const nh = getSource("nh")!;
     const eh = getSource("eh")!;
-    const [a, b] = await Promise.allSettled([
+    const jm = getSource("jm")!;
+    const [a, b, d] = await Promise.allSettled([
       nh.search({ query, tagId, tagName, sort: c.req.query("sort"), page, key }),
       eh.search({ query, tagId, tagName, sort: c.req.query("sort"), page, key }),
+      jm.search({ query, tagId, tagName, sort: c.req.query("sort"), page, key }),
     ]);
     const items = [
       ...(a.status === "fulfilled" ? a.value.items : []),
       ...(b.status === "fulfilled" ? b.value.items : []),
+      ...(d.status === "fulfilled" ? d.value.items : []),
     ];
 
     const nhItems = items.filter((it) => sourceOf(it) === "nh");
@@ -187,6 +195,7 @@ app.get("/api/source/:source/search", async (c) => {
       num_pages: Math.max(
         a.status === "fulfilled" ? a.value.num_pages : 1,
         b.status === "fulfilled" ? b.value.num_pages : 1,
+        d.status === "fulfilled" ? d.value.num_pages : 1,
       ),
       per_page: 25,
       total: null,

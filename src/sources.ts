@@ -10,6 +10,7 @@ import {
 import { fetchMedia as fetchMediaWithServers, serverOrigin } from "./media";
 import { searchEh, ehGallery, ehFetchMedia, ehBrowseTags } from "./ehentai";
 import { suggestEhTags, ehKeysForLocalizedQuery, ehCanonicalTagsFor } from "./ehtags";
+import { jmSearch, jmGallery, jmFetchMedia, jmTags, jmBrowseTags } from "./jm";
 import type { SortOrder } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -274,6 +275,34 @@ const ehAdapter: SourceAdapter = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// jm adapter (禁区漫 / JMComic)
+// ---------------------------------------------------------------------------
+const jmAdapter: SourceAdapter = {
+  id: "jm",
+  name: "jm",
+
+  async search(opts) {
+    return jmSearch({ query: opts.query ?? opts.tagName ?? "", page: opts.page ?? 1 });
+  },
+
+  async gallery(id) {
+    return jmGallery(id);
+  },
+
+  async tags(query, limit) {
+    return jmTags(query, limit);
+  },
+
+  async browseTags(type, page) {
+    return jmBrowseTags(type, page);
+  },
+
+  async fetchMedia(path) {
+    return jmFetchMedia(path, "image");
+  },
+};
+
 const registry: Record<string, SourceAdapter> = {
   nh: nhAdapter,
   nhentai: nhAdapter,
@@ -281,6 +310,9 @@ const registry: Record<string, SourceAdapter> = {
   ehentai: ehAdapter,
   "e-hentai": ehAdapter,
   exhentai: ehAdapter,
+  jm: jmAdapter,
+  jmcomic: jmAdapter,
+  "18comic": jmAdapter,
 };
 
 export function getSource(name: string): SourceAdapter | undefined {
@@ -291,6 +323,7 @@ export function listSources(): Array<{ id: string; name: string }> {
   return [
     { id: "nh", name: "nhentai" },
     { id: "eh", name: "e-hentai" },
+    { id: "jm", name: "jm" },
   ];
 }
 

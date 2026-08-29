@@ -265,14 +265,26 @@ a { color: inherit; }
   background: #fef9c3;
   color: #a16207;
 }
+.src-badge.badge-jm {
+  background: #ffedd5;
+  color: #c2410c;
+}
 :root[data-theme="dark"] .src-badge.badge-eh {
   background: #422006;
   color: #fde047;
+}
+:root[data-theme="dark"] .src-badge.badge-jm {
+  background: #431407;
+  color: #fdba74;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .src-badge.badge-eh {
     background: #422006;
     color: #fde047;
+  }
+  :root:not([data-theme="light"]) .src-badge.badge-jm {
+    background: #431407;
+    color: #fdba74;
   }
 }
 
