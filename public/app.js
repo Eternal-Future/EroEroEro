@@ -52,6 +52,7 @@
     group: "社团",
     category: "分类",
   };
+  const SORTS = ["date", "popular", "popular-today", "popular-week", "popular-month"];
   const SOURCES = { nh: "nhentai", eh: "E-Hentai", jm: "禁漫", bk: "哔咔" };
 
   const PRELOAD_DEFAULT = 5;
@@ -92,6 +93,9 @@
     tags: { type: "tag", page: 1, numPages: 1 },
     detailToken: 0,
   };
+
+  /** Hash whose results are on screen, so Back can skip a refetch. */
+  let lastRenderedHash = "";
 
   // ---- helpers ------------------------------------------------------------
   function apiBase(source) {
@@ -229,23 +233,87 @@
   }
 
   // ---- routing ------------------------------------------------------------
+  // "#/g/nh/123"                        -> detail
+  // "#/search?q=foo&source=eh&page=2"   -> search state
+  // "#/"                                -> default feed
   function hashToRoute() {
-    const h = (location.hash || "#/").replace(/^#/, "");
-    const parts = h.split("/").filter(Boolean);
-    // "#/g/nh/123" -> detail; otherwise search
+    const raw = (location.hash || "#/").replace(/^#/, "");
+    const qIndex = raw.indexOf("?");
+    const path = (qIndex === -1 ? raw : raw.slice(0, qIndex)).replace(/\/+$/, "");
+    const params = new URLSearchParams(qIndex === -1 ? "" : raw.slice(qIndex + 1));
+    const parts = path.split("/").filter(Boolean);
     if (parts[0] === "g" && parts[1] && parts[2]) {
       return { view: "detail", source: parts[1], id: parts[2] };
     }
-    return { view: "search" };
+    return { view: "search", params };
+  }
+
+  /** Encode the current search state; the pristine feed stays at "#/". */
+  function searchHash(page) {
+    const p = new URLSearchParams();
+    if (state.source && state.source !== "all") p.set("source", state.source);
+    // tag_id is what the search needs, tag is the human-readable label: keep
+    // both so a reloaded/shared URL still shows "渠道:标签名" in the box.
+    if (state.tagId) p.set("tag_id", String(state.tagId));
+    if (state.tagName) p.set("tag", state.tagName);
+    if (state.query && !state.tagId && !state.tagName) p.set("q", state.query);
+    if (state.sort && state.sort !== "date") p.set("sort", state.sort);
+    if (page > 1) p.set("page", String(page));
+    const qs = p.toString();
+    return qs ? `#/search?${qs}` : "#/";
+  }
+
+  function restoreSearchState(params) {
+    // The hash is user input: keep source/sort inside what the UI and the
+    // backend actually accept.
+    const source = (params.get("source") || "all").toLowerCase();
+    state.source = /^[a-z0-9_-]+$/.test(source) ? source : "all";
+    const sort = params.get("sort") || "date";
+    state.sort = SORTS.indexOf(sort) >= 0 ? sort : "date";
+    state.tagId = params.get("tag_id") || null;
+    state.tagName = params.get("tag") || "";
+    state.query = params.get("q") || "";
+    if (els.sort) els.sort.value = state.sort;
+    if (state.query) els.q.value = state.query;
+    else if (state.tagName) els.q.value = `${state.source}:${state.tagName}`;
+    else els.q.value = "";
+  }
+
+  /**
+   * Mirror the state into the URL. pushState/replaceState never fire
+   * `hashchange`, so our own writes cannot start a second search, while
+   * Back/Forward still arrive as hashchange.
+   */
+  function syncSearchHash(replace) {
+    const next = searchHash(state.page);
+    if (location.hash === next) return;
+    try {
+      if (replace) history.replaceState(null, "", next);
+      else history.pushState(null, "", next);
+    } catch (_) {
+      location.hash = next;
+    }
+  }
+
+  function applySearchRoute(params, replace) {
+    restoreSearchState(params || new URLSearchParams());
+    show("search");
+    const page = Number(params && params.get("page"));
+    runSearch(Number.isFinite(page) && page >= 1 ? Math.floor(page) : 1, { replace: !!replace });
   }
 
   function applyHash() {
     const route = hashToRoute();
     if (route.view === "detail") {
       openDetail(route.source, route.id, { push: false });
-    } else {
-      show("search");
+      return;
     }
+    // Back to the results already on screen (e.g. from a detail): no refetch.
+    if (location.hash === lastRenderedHash && els.grid.children.length) {
+      show("search");
+      return;
+    }
+    applySearchRoute(route.params, true);
   }
 
   // ---- search -------------------------------------------------------------
@@ -265,11 +333,12 @@
     }
   }
 
-  async function runSearch(page) {
+  async function runSearch(page, opts) {
     if (page != null) state.page = page;
     show("search");
     closeDropdowns();
     renderActiveFilter();
+    syncSearchHash(Boolean(opts && opts.replace));
     status("加载中…");
     els.grid.innerHTML = "";
     const params = new URLSearchParams({ page: String(state.page), sort: state.sort });
@@ -282,6 +351,7 @@
       state.numPages = data.num_pages || 1;
       renderGrid(data.items || []);
       renderPager();
+      lastRenderedHash = searchHash(state.page);
       status(
         data.items && data.items.length
           ? `共 ${fmt(data.total)} 条 · 第 ${state.page}/${state.numPages} 页`
@@ -646,7 +716,6 @@
       chip.append(el("span", "chip-count", fmt(t.count)));
       chip.addEventListener("click", () => {
         selectTag(t, g.source);
-        history.replaceState(null, "", "#/");
       });
       frag.append(chip);
     }
@@ -809,14 +878,12 @@
         state.tagId = null;
         state.tagName = "";
         state.query = v;
-        history.replaceState(null, "", "#/");
         runSearch(1);
         return;
       }
       state.query = v;
       state.tagId = null;
       state.tagName = "";
-      history.replaceState(null, "", "#/");
       runSearch(1);
     });
 
@@ -848,13 +915,18 @@
       }
     });
     $("[data-home]").addEventListener("click", () => {
-      location.hash = "#/";
+      // goHome() -> runSearch() mirrors the (now default) state into the URL.
       goHome();
     });
     $("[data-back]").addEventListener("click", () => {
-      if (!els.grid.children.length) runSearch(1);
-      else location.hash = "#/";
-      show("search");
+      if (els.grid.children.length) {
+        if (lastRenderedHash && location.hash !== lastRenderedHash) {
+          history.pushState(null, "", lastRenderedHash);
+        }
+        show("search");
+        return;
+      }
+      runSearch(1);
     });
 
     $("[data-all-tags]").addEventListener("click", openTagsView);
@@ -906,8 +978,12 @@
   // ---- boot ---------------------------------------------------------------
   function startRoute() {
     const route = hashToRoute();
-    if (route.view === "detail") openDetail(route.source, route.id, { push: false });
-    else runSearch(1);
+    if (route.view === "detail") {
+      openDetail(route.source, route.id, { push: false });
+      return;
+    }
+    // A bookmarked/shared search URL restores input, source, sort and page.
+    applySearchRoute(route.params, true);
   }
 
   async function requireAuth() {
