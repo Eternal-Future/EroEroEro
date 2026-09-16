@@ -161,3 +161,4 @@ api/                Vercel 入口
 - JM 响应体与图片乱序逻辑参考了 <https://github.com/hect0x7/JMComic-Crawler-Python>（MIT）。
 - EH 下载偶尔有源站图片节点超时：单页会重试 3 次并尝试 EH 镜像；仍失败的页面会写占位说明，不破坏 ZIP 完整性。
 - 有明确要改的问题时，用 `--debug` 启动并把日志和请求 URL 一起反馈。
+- 
