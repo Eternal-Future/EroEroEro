@@ -3,7 +3,7 @@
 // imported by the Workers/Vercel entries, so the serverless graph stays free
 // of Node built-ins.
 import { mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { ProxyAgent } from "undici";
 import { setEhAcquireFetcher } from "./ehentai";
@@ -13,8 +13,11 @@ export function installEhNodeBridge(): void {
   const proc = (globalThis as any).process;
   const dataDir = proc?.env?.EHENTAI_STATE_DIR ?? ".data";
   const sqliteFile = proc?.env?.EHENTAI_SQLITE_FILE ?? "eh.sqlite";
-  const base = join(proc.cwd(), dataDir);
-  const dbPath = join(base, sqliteFile.replace(/^\.data\//, ""));
+  // Absolute settings (Windows drive paths included) must not be joined onto
+  // cwd — that produced an unmountable path and crashed startup.
+  const base = isAbsolute(dataDir) ? dataDir : join(proc.cwd(), dataDir);
+  const file = sqliteFile.replace(/^\.data\//, "");
+  const dbPath = isAbsolute(file) ? file : join(base, file);
   mkdirSync(dirname(dbPath), { recursive: true });
 
   const sqlite = new DatabaseSync(dbPath);
@@ -39,8 +42,15 @@ export function installEhNodeBridge(): void {
             "INSERT INTO eh_kv (k, v, updated_at) VALUES (?, ?, strftime('%s','now')) ON CONFLICT(k) DO UPDATE SET v = excluded.v, updated_at = excluded.updated_at",
           )
           .run(key, value);
-      } catch {
-        // best effort
+      } catch (err) {
+        console.error("[ehstore] sqlite put failed", key, err instanceof Error ? err.message : String(err));
+      }
+    },
+    async del(key) {
+      try {
+        sqlite.prepare("DELETE FROM eh_kv WHERE k = ?").run(key);
+      } catch (err) {
+        console.error("[ehstore] sqlite del failed", key, err instanceof Error ? err.message : String(err));
       }
     },
   });

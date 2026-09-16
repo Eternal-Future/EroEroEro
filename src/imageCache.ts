@@ -33,7 +33,15 @@ export function getCachedImage(key: string): { data: Uint8Array; contentType: st
 
 export function putCachedImage(key: string, data: Uint8Array, contentType: string): void {
   if (data.byteLength === 0 || data.byteLength > MAX_ENTRY_BYTES) return;
-  if (cache.has(key)) return;
+
+  const existing = cache.get(key);
+  if (existing) {
+    // A still-fresh entry stays; an expired one is replaced instead of being
+    // silently kept (it used to make the key unrefreshable until eviction).
+    if (Date.now() - existing.at <= TTL_MS) return;
+    totalBytes -= existing.size;
+    cache.delete(key);
+  }
 
   cache.set(key, { data, contentType, at: Date.now(), size: data.byteLength });
   totalBytes += data.byteLength;

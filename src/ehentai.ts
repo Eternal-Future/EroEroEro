@@ -1,6 +1,7 @@
 import { USER_AGENT } from "./env";
 import { debugLog } from "./debug";
 import { ehGet, ehPut } from "./ehstore";
+import { allowedHostSuffixes, isAllowedMediaUrl, MediaUrlError } from "./media";
 import type {
   NormalizedGallery,
   NormalizedListItem,
@@ -27,6 +28,23 @@ let persistBridge: PersistBridge | null = null;
 let memoryState: EhPersistState | null = null;
 let loaded = false;
 let requestEnv: Record<string, string> | null = null;
+
+/** Bound the igneous acquisition so a hung proxy cannot stall the request. */
+const ACQUIRE_TIMEOUT_MS = 15_000;
+/** Back off after a transient acquisition failure (network/proxy). */
+const ACQUIRE_COOLDOWN_MS = 10 * 60 * 1000;
+/** Re-check a persisted "no igneous" verdict now and then. */
+const BLOCKED_RETRY_MS = 6 * 60 * 60 * 1000;
+let acquireCooldownUntil = 0;
+
+// Thumbnails are the one e-hentai media URL that arrives from the client, so
+// they are host-checked (EH_MEDIA_HOSTS extends this list). Page images come
+// out of e-hentai's own viewer HTML and are not client-controllable.
+const EH_MEDIA_HOSTS_DEFAULT = ["e-hentai.org", "exhentai.org", "ehgt.org", "hath.network"];
+
+function ehMediaHosts(): string[] {
+  return allowedHostSuffixes("EH_MEDIA_HOSTS", EH_MEDIA_HOSTS_DEFAULT);
+}
 
 export function setEhAcquireFetcher(fn: AcquireFetcher): void {
   acquireFetcher = fn;
@@ -136,12 +154,35 @@ async function acquireIgneous(): Promise<string | null> {
     debugLog("[eh] acquireIgneous: no EHENTAI_COOKIE configured");
     return null;
   }
+  if (Date.now() < acquireCooldownUntil) {
+    debugLog("[eh] acquireIgneous: cooling down after a recent failure");
+    return null;
+  }
 
   const url = `https://exhentai.org/?_=${Date.now()}`;
   debugLog("[eh] acquireIgneous: fetching", url, "via", acquireFetcher ? "proxy" : "direct");
-  const res = await (acquireFetcher ?? fetch)(url, {
-    headers: { "User-Agent": USER_AGENT, Cookie: cookie },
-  });
+  let res: Response;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ACQUIRE_TIMEOUT_MS);
+  try {
+    res = await (acquireFetcher ?? fetch)(url, {
+      headers: { "User-Agent": USER_AGENT, Cookie: cookie },
+      signal: controller.signal,
+    });
+  } catch (err) {
+    // A network/proxy failure says nothing about the cookie, so it must never be
+    // persisted as "blocked" (that used to disable exhentai until someone
+    // deleted the state row). Back off for a while instead.
+    acquireCooldownUntil = Date.now() + ACQUIRE_COOLDOWN_MS;
+    debugLog(
+      "[eh] acquireIgneous: request failed, backing off:",
+      err instanceof Error ? err.message : String(err),
+    );
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+
   const setCookies = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
   const headerCookie = res.headers.get("set-cookie") ?? "";
   const all = setCookies.length ? setCookies.join("; ") : headerCookie;
@@ -152,14 +193,26 @@ async function acquireIgneous(): Promise<string | null> {
     await saveState({ igneous: ig, blocked: false, at: Date.now() });
     return ig;
   }
-  await saveState({ igneous: null, blocked: true, at: Date.now() });
+  if (res.ok || res.status === 403) {
+    // The server answered but handed out no usable igneous: this cookie really
+    // cannot use exhentai right now.
+    await saveState({ igneous: null, blocked: true, at: Date.now() });
+  } else {
+    acquireCooldownUntil = Date.now() + ACQUIRE_COOLDOWN_MS;
+  }
   return null;
 }
 
 async function tryExh(path: string): Promise<string | null> {
   await load();
   if (!memoryState?.igneous) {
-    if (memoryState?.blocked) return null;
+    if (memoryState?.blocked) {
+      // "blocked" is only written for definitive answers, but a stale verdict
+      // (cookie/proxy fixed later) should recover on its own.
+      const at = Number(memoryState.at ?? 0);
+      if (at && Date.now() - at < BLOCKED_RETRY_MS) return null;
+      debugLog("[eh] tryExh: retrying igneous after a stale blocked verdict");
+    }
     const ig = await acquireIgneous();
     if (!ig) return null;
   }
@@ -513,7 +566,11 @@ export async function ehBrowseTags(type: string, page: number): Promise<BrowseRe
 export async function ehFetchMedia(path: string, kind: "image" | "thumb"): Promise<MediaFetchResult> {
   await load();
   if (kind === "thumb") {
-    if (!path.startsWith("https://")) throw new EhError(400, `bad eh thumb path`);
+    // The thumbnail URL is client-supplied, so it has to be a host e-hentai
+    // actually serves images from (see EH_MEDIA_HOSTS).
+    if (!isAllowedMediaUrl(path, ehMediaHosts())) {
+      throw new MediaUrlError("bad eh thumb path");
+    }
     const referer = memoryState?.igneous ? "https://exhentai.org/" : "https://e-hentai.org/";
     debugLog("[eh] fetch thumb", path.slice(0, 80));
     const mode = memoryState?.igneous && path.includes("exhentai") ? "exh" : "eh";
@@ -529,19 +586,22 @@ export async function ehFetchMedia(path: string, kind: "image" | "thumb"): Promi
   if (!m) throw new EhError(400, `bad eh viewer path`);
   const [, gid, page, key] = m;
 
-  let variant: "exh" | "eh" = "eh";
-  if (memoryState?.igneous) variant = "exh";
   const viewerPath = `/s/${key}/${gid}-${page}`;
-  const viewerHtml =
-    variant === "exh"
-      ? ((await tryExh(viewerPath)) ?? (await fetchEh(viewerPath)))
-      : await fetchEh(viewerPath);
+  let served: "exh" | "eh" = memoryState?.igneous ? "exh" : "eh";
+  let viewerHtml: string | null = served === "exh" ? await tryExh(viewerPath) : null;
+  if (viewerHtml === null) {
+    // exhentai unavailable/not allowed for this gallery: the HTML now comes
+    // from e-hentai, and the image request must follow suit (referer + cookies)
+    // or the node rejects it.
+    viewerHtml = await fetchEh(viewerPath);
+    served = "eh";
+  }
 
   const imgUrl = viewerHtml.match(/<img id="img" src="([^"]+)"/)?.[1];
   if (!imgUrl) throw new EhError(502, "could not find image url in viewer page");
   if (!imgUrl.startsWith("https://")) throw new EhError(502, `bad image url: ${imgUrl}`);
 
-  const base = variant === "exh" ? "https://exhentai.org" : "https://e-hentai.org";
+  const base = served === "exh" ? "https://exhentai.org" : "https://e-hentai.org";
   debugLog("[eh] fetch page", base + viewerPath, "->", imgUrl.slice(0, 90));
 
   const tryImage = async (url: string, refererBase: string, cookieMode: "exh" | "eh") => {
@@ -561,7 +621,7 @@ export async function ehFetchMedia(path: string, kind: "image" | "thumb"): Promi
   };
 
   try {
-    return { response: await tryImage(imgUrl, base, variant) };
+    return { response: await tryImage(imgUrl, base, served) };
   } catch (err) {
     debugLog("[eh] image failed, trying e-hentai mirror:", err instanceof Error ? err.message : String(err));
     const mirrorHtml = await fetchEh(viewerPath);

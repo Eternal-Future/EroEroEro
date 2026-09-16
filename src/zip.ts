@@ -54,6 +54,12 @@ function putU32(dv: DataView, off: number, v: number): number {
   return off + 4;
 }
 
+// The classic (non-ZIP64) format is all this writer implements, so refuse to
+// emit an archive those fields cannot describe instead of silently truncating
+// the count/offset fields into a corrupt file.
+const MAX_ENTRIES = 0xffff;
+const MAX_OFFSET = 0xffffffff;
+
 function localHeader(name: Uint8Array): Uint8Array {
   const buf = new Uint8Array(30 + name.length);
   const dv = new DataView(buf.buffer);
@@ -133,8 +139,14 @@ async function* buildZip(
   let offset = 0;
 
   for await (const entry of entries) {
+    if (central.length >= MAX_ENTRIES) {
+      throw new Error(`zip: more than ${MAX_ENTRIES} entries (ZIP64 not supported)`);
+    }
     const name = encoder.encode(entry.name);
     const localOffset = offset;
+    if (localOffset > MAX_OFFSET) {
+      throw new Error("zip: archive exceeds 4 GiB (ZIP64 not supported)");
+    }
     const header = localHeader(name);
     offset += header.length;
     yield header;

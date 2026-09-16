@@ -4,6 +4,7 @@ import webpEncode, { init as webpEncInit } from "@jsquash/webp/encode.js";
 import { webpDecWasmBase64, webpEncWasmBase64 } from "./webp-wasm";
 import { USER_AGENT } from "./env";
 import { debugLog } from "./debug";
+import { allowedHostSuffixes, hostOf, isAllowedMediaUrl, MediaUrlError } from "./media";
 import type {
   NormalizedGallery,
   NormalizedListItem,
@@ -25,6 +26,26 @@ function env(name: string, fallback: string): string {
 
 const JM_BASE = env("JM_BASE", "https://www.cdngwc.cc").replace(/\/+$/, "");
 const JM_CDN_COVER = env("JM_CDN_COVER", "https://cdn-msp.jmapiproxy1.cc").replace(/\/+$/, "");
+
+// Image URLs come straight from the API, so the allowlist has to cover the
+// mirrors JM hands out; whatever JM_BASE / JM_CDN_COVER point at is allowed too.
+const JM_MEDIA_HOSTS_DEFAULT = [
+  "jmapiproxy1.cc",
+  "jmapiproxy2.cc",
+  "jmapiproxy3.cc",
+  "jmapiproxy4.cc",
+  "jmapiproxy5.cc",
+  "jmcomic.me",
+  "jmcomic1.cc",
+  "cdngwc.cc",
+  "18comic.vip",
+  "18comic.org",
+];
+
+function jmMediaHosts(): string[] {
+  const configured = [hostOf(JM_BASE), hostOf(JM_CDN_COVER)].filter(Boolean) as string[];
+  return allowedHostSuffixes("JM_MEDIA_HOSTS", [...JM_MEDIA_HOSTS_DEFAULT, ...configured]);
+}
 
 function md5Hex(s: string): string {
   return CryptoJS.MD5(s).toString();
@@ -155,7 +176,9 @@ export async function jmFetchMedia(
   path: string,
   kind: "image" | "thumb",
 ): Promise<MediaFetchResult> {
-  if (!path.startsWith("https://")) throw new Error("bad jm media path");
+  if (!isAllowedMediaUrl(path, jmMediaHosts())) {
+    throw new MediaUrlError("jm media host not allowed");
+  }
   debugLog("[jm] fetch", kind, path.slice(0, 90));
   const res = await fetch(path, {
     headers: { "user-agent": USER_AGENT, referer: "http://localhost" },
@@ -173,19 +196,37 @@ export async function jmFetchMedia(
     const num = jmSegments(Number(scrambleId) || 0, Number(aid) || 0, filename);
     if (num === 0) return { response: res };
 
+    // Past this point the body is in memory, so every exit path has to hand
+    // back a response built from `buffer` — returning the original (already
+    // consumed) response makes the caller fail with "Body is unusable".
+    const contentType = res.headers.get("content-type") || "image/webp";
     const buffer = await res.arrayBuffer();
-    await ensureJmWasm();
-    const decoded = await webpDecode(buffer);
-    const reordered = reorderRgba(decoded, num);
-    const encoded = await webpEncode(reordered, { quality: 90 });
-    return {
-      response: new Response(new Uint8Array(encoded).buffer as ArrayBuffer, {
-        headers: {
-          "Content-Type": res.headers.get("content-type") || "image/webp",
-          "Content-Length": String(encoded.byteLength),
-        },
-      }),
-    };
+    try {
+      await ensureJmWasm();
+      const decoded = await webpDecode(buffer);
+      const reordered = reorderRgba(decoded, num);
+      const encoded = await webpEncode(reordered, { quality: 90 });
+      return {
+        response: new Response(new Uint8Array(encoded).buffer as ArrayBuffer, {
+          headers: {
+            "Content-Type": "image/webp",
+            "Content-Length": String(encoded.byteLength),
+          },
+        }),
+      };
+    } catch (err) {
+      // Not decodable as webp (jm also serves .jpg/.gif pages) — pass the
+      // original bytes through untouched.
+      debugLog("[jm] reorder skipped", err instanceof Error ? err.message : String(err));
+      return {
+        response: new Response(buffer, {
+          headers: {
+            "Content-Type": contentType,
+            "Content-Length": String(buffer.byteLength),
+          },
+        }),
+      };
+    }
   } catch (err) {
     debugLog("[jm] reorder skipped", err instanceof Error ? err.message : String(err));
     return { response: res };

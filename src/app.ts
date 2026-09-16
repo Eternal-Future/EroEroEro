@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { index_html, style_css, app_js, sw_js } from "./assets";
 import { getEnv } from "./env";
 import { debugLog, debugEnabledFlag } from "./debug";
+import { setBackgroundRunner } from "./bg";
 import { NhentaiError } from "./nhentai";
 import { EhError, getEhJapaneseTitle, setEhRequestEnv } from "./ehentai";
 import { getCachedImage, imageCacheKey, putCachedImage } from "./imageCache";
@@ -9,10 +10,19 @@ import { maybeInitEhStore } from "./ehstore";
 import { aggregateSearch } from "./query";
 import { getNhPublishDate } from "./nhDates";
 import {
+  contentTypeFor,
+  discardBody,
+  isServableImageType,
+  MediaUrlError,
+  normalizeMediaType,
+  readBodyCapped,
+} from "./media";
+import {
   buildMediaUrl,
   getSource,
   listSources,
   type NormalizedPage,
+  type NormalizedSearchResult,
   type SourceAdapter,
 } from "./sources";
 import { zipStream } from "./zip";
@@ -51,6 +61,7 @@ app.use("*", async (c, next) => {
 app.use("*", async (c, next) => {
   await maybeInitEhStore(c.env);
   setEhRequestEnv(c.env as Record<string, unknown> | null | undefined);
+  setBackgroundRunner(requestExecutionCtx(c));
   await next();
   if (!c.res.headers.has("Cache-Control")) {
     c.res.headers.set("Cache-Control", "no-store");
@@ -154,7 +165,7 @@ app.get("/api/source/:source/search", async (c) => {
   const crossSyntax = /&|(\b(nh|eh|jm|bk|nhentai|ehentai|e-hentai|exhentai|jmcomic|18comic|bika|picacg|picacomic):)/i;
   if (query && (requested === "all" || crossSyntax.test(query))) {
     const scope = requested === "all" ? undefined : [requested];
-    const data = await aggregateSearch(query, page, key, scope);
+    const data = await aggregateSearch(query, page, key, scope, c.req.query("sort"));
     await enrichEhTitles(data.items);
     return c.json({
       source: requested,
@@ -174,11 +185,20 @@ app.get("/api/source/:source/search", async (c) => {
     const jm = getSource("jm")!;
     const bk = getSource("bk")!;
     const sortRaw = c.req.query("sort");
+    // jm/bk search by keyword only: a tag filter would silently turn into a
+    // full-text search, so they sit this request out.
+    const tagFiltered = Boolean(tagId) || Boolean(tagName);
+    const emptyFeed: NormalizedSearchResult = {
+      items: [],
+      num_pages: 1,
+      per_page: 0,
+      total: null,
+    };
     const [nhR, ehR, jmR, bkR] = await Promise.allSettled([
       nh.search({ query, tagId, tagName, sort: sortRaw, page, key }),
       eh.search({ query, tagId, tagName, sort: sortRaw, page, key }),
-      jm.search({ query, tagId, tagName, sort: sortRaw, page, key }),
-      bk.search({ query, tagId, tagName, sort: sortRaw, page, key }),
+      tagFiltered ? emptyFeed : jm.search({ query, tagId, tagName, sort: sortRaw, page, key }),
+      tagFiltered ? emptyFeed : bk.search({ query, tagId, tagName, sort: sortRaw, page, key }),
     ]);
     const items = [
       ...(nhR.status === "fulfilled" ? nhR.value.items : []),
@@ -188,7 +208,8 @@ app.get("/api/source/:source/search", async (c) => {
     ];
 
     const nhItems = items.filter((it) => sourceOf(it) === "nh");
-    await mapLimit(nhItems, 5, async (it) => {
+    // nhentai's anonymous detail limit is 20/min, so keep this gentle.
+    await mapLimit(nhItems, 3, async (it) => {
       it.published = await getNhPublishDate(it.id, key);
     });
     await enrichEhTitles(items);
@@ -318,8 +339,24 @@ app.get("/api/source/:source/img", async (c) => {
   } else {
     cacheHit = false;
     const { response } = await adapter.fetchMedia(path, kind);
-    data = new Uint8Array(await response.arrayBuffer());
-    contentType = response.headers.get("content-type") ?? "application/octet-stream";
+
+    // The proxy keeps the upstream Content-Type, so anything that is not a
+    // raster image (html/text/svg) would execute on this origin. Refuse it.
+    const upstreamType =
+      normalizeMediaType(response.headers.get("content-type")) || contentTypeFor(path);
+    if (!isServableImageType(upstreamType)) {
+      await discardBody(response);
+      return mediaError(502, `unsupported upstream content-type: ${upstreamType || "unknown"}`);
+    }
+
+    try {
+      data = await readBodyCapped(response);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      debugLog("[img] body rejected", adapter.id, kind, message);
+      return mediaError(502, message);
+    }
+    contentType = upstreamType;
     putCachedImage(cacheKey, data, contentType);
   }
 
@@ -328,12 +365,25 @@ app.get("/api/source/:source/img", async (c) => {
   const cacheable = data.byteLength <= 3 * 1024 * 1024;
   const etag = `W/"${data.byteLength.toString(36)}-${hashCode(path + kind).toString(36)}"`;
 
+  const cacheControl = cacheable
+    ? "public, max-age=86400, s-maxage=86400, stale-while-revalidate=604800"
+    : "no-store";
+
+  if (cacheable && etagMatches(c.req.header("If-None-Match"), etag)) {
+    return new Response(null, {
+      status: 304,
+      headers: {
+        ETag: etag,
+        "Cache-Control": cacheControl,
+        "X-Cache": cacheHit ? "HIT" : "MISS",
+      },
+    });
+  }
+
   const headers: Record<string, string> = {
     "Content-Type": contentType,
     "Content-Length": String(data.byteLength),
-    "Cache-Control": cacheable
-      ? "public, max-age=86400, s-maxage=86400, stale-while-revalidate=604800"
-      : "no-store",
+    "Cache-Control": cacheControl,
     "CDN-Cache-Control": cacheable ? "public, max-age=86400" : "no-cache",
     "Vercel-CDN-Cache-Control": cacheable ? "public, max-age=86400" : "no-cache",
     ETag: etag,
@@ -379,22 +429,26 @@ app.get("/api/source/:source/download/:id", async (c) => {
     const clean = base.split(/[?#]/)[0];
     const dot = clean.lastIndexOf(".");
     const e = dot >= 0 ? clean.slice(dot + 1).toLowerCase() : "";
-    return e || "webp";
+    return e || "";
   };
-  const pageName = (p: NormalizedPage) =>
-    `${String(p.number).padStart(4, "0")}.${ext(p.path)}`;
+  // The path alone is not enough: eh pages are addressed as
+  // `viewer/{gid}/{page}/{key}` and carry no extension at all, so the real
+  // format comes from the fetched media type.
+  const pageName = (p: NormalizedPage, contentType: string) =>
+    `${String(p.number).padStart(4, "0")}.${extFromContentType(contentType) || ext(p.path) || "webp"}`;
 
   const fetchPage = async (p: NormalizedPage, preferred?: string) => {
     try {
       const r = await adapter.fetchMedia(p.path, "image", preferred);
-      return { response: r.response, serverHint: r.serverHint };
+      const contentType =
+        normalizeMediaType(r.response.headers.get("content-type")) || contentTypeFor(p.path);
+      const data = await readBodyCapped(r.response);
+      return { data, contentType, serverHint: r.serverHint };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return {
-        response: new Response(
-          `failed to fetch page ${p.number}: ${message}`,
-          { headers: { "Content-Type": "text/plain" } },
-        ),
+        data: new TextEncoder().encode(`failed to fetch page ${p.number}: ${message}`),
+        contentType: "text/plain",
       };
     }
   };
@@ -410,7 +464,8 @@ app.get("/api/source/:source/download/:id", async (c) => {
   const asciiName = (
     folder.replace(/[^\x20-\x7e]/g, "_").replace(/\s+/g, " ").trim() || String(g.id)
   ).slice(0, 60);
-  const disposition = `attachment; filename="${asciiName}.zip"; filename*=UTF-8''${encodeURIComponent(folder)}.zip`;
+  const encodedFolder = encodeURIComponent(folder).replace(/'/g, "%27");
+  const disposition = `attachment; filename="${asciiName}.zip"; filename*=UTF-8''${encodedFolder}.zip`;
 
   return new Response(zipStream(entries), {
     headers: {
@@ -433,22 +488,70 @@ app.onError((err, c) => {
   if (err instanceof EhError) {
     return c.json({ error: err.message, status: err.status }, { status: err.status as any });
   }
+  if (err instanceof MediaUrlError) {
+    return c.json({ error: err.message, status: err.status }, { status: err.status as any });
+  }
   const message = err instanceof Error ? err.message : String(err);
   console.error("[ero-cubed]", message);
-  return c.json({ error: "internal error", detail: message }, 500);
+  // Upstream URLs and internals stay in the server log; only debug mode echoes
+  // them back to the caller.
+  return c.json(
+    debugEnabledFlag() ? { error: "internal error", detail: message } : { error: "internal error" },
+    500,
+  );
 });
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+/** Small text response for media failures (never cached, never sniffable). */
+function mediaError(status: number, message: string): Response {
+  return new Response(`${message}\n`, {
+    status,
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+}
+
+/** Weak ETag comparison against an If-None-Match header. */
+function etagMatches(header: string | undefined, etag: string): boolean {
+  if (!header) return false;
+  const bare = etag.replace(/^W\//, "");
+  return header.split(",").some((raw) => {
+    const token = raw.trim();
+    if (!token) return false;
+    if (token === "*") return true;
+    return token.replace(/^W\//, "") === bare;
+  });
+}
+
+/** Request ExecutionContext (Workers/Vercel); undefined elsewhere. */
+function requestExecutionCtx(c: any): { waitUntil?: (p: Promise<unknown>) => void } | null {
+  try {
+    return c.executionCtx ?? null;
+  } catch {
+    // Hono throws when the runtime has no ExecutionContext (plain Node).
+    return null;
+  }
+}
+
+interface PagePayload {
+  data: Uint8Array;
+  contentType: string;
+  serverHint?: string;
+}
+
 const fetchPagesBuffered = async function* (
   pages: NormalizedPage[],
   limit: number,
-  nameFor: (p: NormalizedPage) => string,
-  fetchPage: (p: NormalizedPage, preferred?: string) => Promise<{ response: Response; serverHint?: string }>,
+  nameFor: (p: NormalizedPage, contentType: string) => string,
+  fetchPage: (p: NormalizedPage, preferred?: string) => Promise<PagePayload>,
 ): AsyncGenerator<{ name: string; open: () => Promise<Uint8Array> }, void, void> {
   let preferredServer: string | undefined;
-  const results = new Map<number, Uint8Array>();
+  const results = new Map<number, PagePayload>();
   const waiters = new Map<number, () => void>();
   let error: Error | null = null;
   let next = 0;
@@ -468,9 +571,9 @@ const fetchPagesBuffered = async function* (
       const i = next++;
       (async () => {
         try {
-          const { response, serverHint } = await fetchPage(pages[i], preferredServer);
-          if (serverHint) preferredServer = serverHint;
-          results.set(i, new Uint8Array(await response.arrayBuffer()));
+          const payload = await fetchPage(pages[i], preferredServer);
+          if (payload.serverHint) preferredServer = payload.serverHint;
+          results.set(i, payload);
         } catch (e) {
           error = e instanceof Error ? e : new Error(String(e));
         } finally {
@@ -496,11 +599,33 @@ const fetchPagesBuffered = async function* (
       });
     }
     if (error) throw error;
-    const data = results.get(i)!;
+    const payload = results.get(i)!;
     results.delete(i);
-    yield { name: nameFor(pages[i]), open: async () => data };
+    yield { name: nameFor(pages[i], payload.contentType), open: async () => payload.data };
   }
 };
+
+/** Image extension for a media type, or "" when it is not a known image type. */
+function extFromContentType(contentType: string): string {
+  switch (normalizeMediaType(contentType)) {
+    case "image/jpeg":
+      return "jpg";
+    case "image/png":
+      return "png";
+    case "image/webp":
+      return "webp";
+    case "image/gif":
+      return "gif";
+    case "image/avif":
+      return "avif";
+    case "image/bmp":
+      return "bmp";
+    case "text/plain":
+      return "txt";
+    default:
+      return "";
+  }
+}
 
 async function enrichEhTitles(items: Array<any>): Promise<void> {
   const ehItems = items.filter(

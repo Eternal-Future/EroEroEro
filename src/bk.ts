@@ -1,7 +1,8 @@
 import CryptoJS from "crypto-js";
 import { USER_AGENT } from "./env";
 import { debugLog } from "./debug";
-import { ehGet, ehPut } from "./ehstore";
+import { ehGet, ehPut, ehDel } from "./ehstore";
+import { allowedHostSuffixes, hostOf, isAllowedMediaUrl, MediaUrlError } from "./media";
 import type {
   NormalizedGallery,
   NormalizedListItem,
@@ -26,6 +27,18 @@ function env(name: string, fallback: string): string {
 
 const BK_API_BASE = env("BK_API_BASE", "https://picaapi.go2778.com/").replace(/\/+$/, "") + "/";
 const BK_IMAGE_QUALITY = env("BK_IMAGE_QUALITY", "original");
+
+// PicAcg hands out image URLs on its storage hosts; the API base and anything
+// listed in BK_MEDIA_HOSTS are allowed too.
+const BK_MEDIA_HOSTS_DEFAULT = ["picacomic.com", "picacomic.xyz", "manhuabika.com"];
+
+function bkMediaHosts(): string[] {
+  const configured = hostOf(BK_API_BASE);
+  return allowedHostSuffixes("BK_MEDIA_HOSTS", [
+    ...BK_MEDIA_HOSTS_DEFAULT,
+    ...(configured ? [configured] : []),
+  ]);
+}
 
 function bytes(str: string): Uint8Array {
   const arr = new Uint8Array(str.length);
@@ -99,27 +112,119 @@ function makeHeaders(urlDir: string, method: string, authorization?: string): Re
   return h;
 }
 
-async function getToken(): Promise<string | undefined> {
-  const cached = await ehGet("bk_token");
-  if (cached) return cached;
-  return env("BK_TOKEN", "");
+async function getToken(): Promise<string> {
+  // An explicitly configured token always wins: otherwise a stale cached value
+  // would keep overriding a freshly set BK_TOKEN.
+  const fromEnv = env("BK_TOKEN", "");
+  if (fromEnv) return fromEnv;
+  return (await ehGet("bk_token")) ?? "";
 }
 
 async function saveToken(token: string): Promise<void> {
   await ehPut("bk_token", token);
 }
 
-async function login(): Promise<string> {
-  const existing = await getToken();
-  if (existing) return existing;
-  const email = env("BK_EMAIL", "");
-  const password = env("BK_PASSWORD", "");
-  if (!email || !password) throw new Error("bk login requires BK_EMAIL and BK_PASSWORD (or BK_TOKEN)");
-  const data = await bkApi("POST", "auth/sign-in", { email, password }, undefined);
-  const token = data?.token;
-  if (!token) throw new Error("bk login failed");
-  await saveToken(token);
-  return token;
+async function clearToken(): Promise<void> {
+  await ehDel("bk_token");
+}
+
+async function signIn(email: string, password: string): Promise<string> {
+  const r = await bkRequest("POST", "auth/sign-in", { email, password }, "");
+  if (r.code !== 200 || !r.data?.token) {
+    throw new Error(`bk login failed -> ${r.code ?? "unknown"} ${r.message ?? ""}`.trim());
+  }
+  await saveToken(r.data.token as string);
+  return r.data.token as string;
+}
+
+// One in-flight login per isolate. Concurrent requests used to fire their own
+// sign-in, which both wasted a request and fought over the stored token.
+let loginPromise: Promise<string> | null = null;
+
+function ensureToken(): Promise<string> {
+  if (loginPromise) return loginPromise;
+  const p = (async () => {
+    const existing = await getToken();
+    if (existing) return existing;
+    const email = env("BK_EMAIL", "");
+    const password = env("BK_PASSWORD", "");
+    if (!email || !password) {
+      throw new Error("bk login requires BK_EMAIL and BK_PASSWORD (or BK_TOKEN)");
+    }
+    return signIn(email, password);
+  })();
+  loginPromise = p;
+  p.catch(() => {}).finally(() => {
+    if (loginPromise === p) loginPromise = null;
+  });
+  return p;
+}
+
+/** Drop the stored token and sign in again; returns null when impossible. */
+let refreshPromise: Promise<string | null> | null = null;
+
+function refreshToken(): Promise<string | null> {
+  if (refreshPromise) return refreshPromise;
+  const p = (async () => {
+    await clearToken();
+    const email = env("BK_EMAIL", "");
+    const password = env("BK_PASSWORD", "");
+    if (!email || !password) return null;
+    try {
+      debugLog("[bk] signing in again after an auth failure");
+      return await signIn(email, password);
+    } catch (err) {
+      debugLog("[bk] re-login failed:", err instanceof Error ? err.message : String(err));
+      return null;
+    }
+  })();
+  refreshPromise = p;
+  p.catch(() => {}).finally(() => {
+    if (refreshPromise === p) refreshPromise = null;
+  });
+  return p;
+}
+
+interface BkResponse {
+  status: number;
+  ok: boolean;
+  code?: number;
+  message?: string;
+  data: any;
+}
+
+async function bkRequest(
+  method: string,
+  urlDir: string,
+  jsonBody?: Record<string, unknown>,
+  authorization?: string,
+): Promise<BkResponse> {
+  const res = await fetch(BK_API_BASE + urlDir, {
+    method,
+    headers: makeHeaders(urlDir, method, authorization || undefined),
+    body: jsonBody ? JSON.stringify(jsonBody) : undefined,
+  });
+  let payload: any = null;
+  try {
+    payload = await res.json();
+  } catch {
+    // non-JSON error page; status is all we have
+  }
+  return {
+    status: res.status,
+    ok: res.ok,
+    code: typeof payload?.code === "number" ? payload.code : undefined,
+    message: payload?.message ?? payload?.error ?? "",
+    data: payload?.data,
+  };
+}
+
+/** PicAcg reports auth problems either as HTTP 401/403 or as `code` 401/403. */
+function isAuthFailure(r: BkResponse): boolean {
+  if (r.status === 401 || r.status === 403) return true;
+  if (r.code === 401 || r.code === 403) return true;
+  const msg = String(r.message ?? "").toLowerCase();
+  return /unauthor|not\s*log|未登[入录]|登录(失效|过期)|token\s*(expire|invalid|not)|invalid\s*token/.test(msg);
 }
 
 async function bkApi(
@@ -127,21 +232,36 @@ async function bkApi(
   urlDir: string,
   jsonBody?: Record<string, unknown>,
   token?: string,
+  retried = false,
 ): Promise<any> {
-  const authorization = token ?? (await getToken());
-  const res = await fetch(BK_API_BASE + urlDir, {
-    method,
-    headers: makeHeaders(urlDir, method, authorization),
-    body: jsonBody ? JSON.stringify(jsonBody) : undefined,
-  });
-  if (!res.ok) throw new Error(`bk ${urlDir} -> HTTP ${res.status}`);
-  const j = await res.json();
-  if (j?.code !== 200) throw new Error(`bk ${urlDir} -> ${j?.code ?? "unknown"} ${j?.message ?? j?.error ?? ""}`);
-  return j.data;
+  const authorization = token || (await ensureToken());
+  const r = await bkRequest(method, urlDir, jsonBody, authorization);
+
+  if (isAuthFailure(r) && !retried) {
+    // Cached tokens expire; without this retry a stale value 401s forever
+    // because it is persisted in the KV store. Exactly one retry per request:
+    // a fresh token that is still rejected means the account/token itself is
+    // not usable, and signing in repeatedly would just loop.
+    const fresh = await refreshToken();
+    if (fresh && fresh !== authorization) {
+      return bkApi(method, urlDir, jsonBody, fresh, true);
+    }
+  }
+
+  if (r.status === 401 || r.status === 403) {
+    throw new Error(`bk ${urlDir} -> HTTP ${r.status}${r.message ? ` ${r.message}` : ""}`);
+  }
+  if (!r.ok) throw new Error(`bk ${urlDir} -> HTTP ${r.status}`);
+  if (r.code !== 200) {
+    throw new Error(`bk ${urlDir} -> ${r.code ?? "unknown"} ${r.message}`.trim());
+  }
+  return r.data;
 }
 
 function pictureUrl(pic: any): string {
-  const server = String(pic?.fileServer ?? "").replace(/https?:\/\//, "").replace(/\/+$/, "");
+  const server = String(pic?.fileServer ?? "")
+    .replace(/^https?:\/\//i, "")
+    .replace(/\/+$/, "");
   const path = String(pic?.path ?? "").replace(/^\/+/, "");
   if (!server || !path) return "";
   const s = `https://${server}/static/${path}`.replace(/\/\/static\//, "/static/");
@@ -172,7 +292,7 @@ function pageMeta(info: any) {
 }
 
 export async function bkSearch(opts: { query: string; page?: number }): Promise<NormalizedSearchResult> {
-  const token = await login();
+  const token = await ensureToken();
   const page = Math.max(1, opts.page ?? 1);
   const body = { keyword: opts.query.trim(), sort: "dd" };
   const res = await bkApi("POST", `comics/advanced-search?page=${page}&s=dd`, body, token);
@@ -187,7 +307,7 @@ export async function bkSearch(opts: { query: string; page?: number }): Promise<
 }
 
 export async function bkGallery(id: string): Promise<NormalizedGallery> {
-  const token = await login();
+  const token = await ensureToken();
   const detail = await bkApi("GET", `comics/${id}`, undefined, token);
   const comic = detail?.comic ?? {};
   const name = comic.title || `#${id}`;
@@ -218,8 +338,10 @@ export async function bkGallery(id: string): Promise<NormalizedGallery> {
       pagesCount = meta.pages || 1;
       for (const img of meta.docs) {
         const url = pictureUrl(img?.media);
-        number += 1;
+        // Skip pages the API returned without an image URL before numbering, so
+        // the page/ZIP numbering stays contiguous.
         if (!url) continue;
+        number += 1;
         pages.push({
           number,
           path: url,
@@ -260,7 +382,9 @@ export async function bkFetchMedia(
   path: string,
   _kind: "image" | "thumb",
 ): Promise<MediaFetchResult> {
-  if (!path.startsWith("https://")) throw new Error("bad bk media path");
+  if (!isAllowedMediaUrl(path, bkMediaHosts())) {
+    throw new MediaUrlError("bk media host not allowed");
+  }
   debugLog("[bk] fetch", path.slice(0, 90));
   const res = await fetch(path, {
     headers: {

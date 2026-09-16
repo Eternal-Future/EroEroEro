@@ -1,5 +1,6 @@
 import { USER_AGENT } from "./env";
 import { ehGet, ehPut } from "./ehstore";
+import { runInBackground } from "./bg";
 import type { NormalizedTag } from "./sources";
 
 const DB_URL =
@@ -84,7 +85,9 @@ async function refreshIfStale(now: number): Promise<void> {
   const raw = await ehGet(UPDATED_KEY);
   const at = raw ? Number(raw) : 0;
   if (!at || now - at > TTL_MS) {
-    void loadTags(true);
+    // Workers cancel unawaited work once the response is sent, so hand the
+    // refresh to the request's execution context when there is one.
+    runInBackground(loadTags(true));
   }
 }
 

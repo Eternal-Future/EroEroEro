@@ -23,7 +23,8 @@
   - 空格 = **AND**
   - `&` = **OR**
   - 带空格的词用引号
-  - 支持标签 + 关键词混用
+  - `-渠道:词` 过滤：nh / eh 用原生排除语法，jm / bk 只支持关键词，改为按标题过滤
+  - 支持标签 + 关键词混用；单个渠道出错不会拖垮整次搜索（全部渠道都失败才报错）
 - 搜索预览：输入停下 2 秒，输入框下方展示前 5 条结果。
 - 阅读器：方向键 / 点击翻页，顺序预加载后续页（默认 5，可用 `?preload=N` 或 localStorage `ero3.preload` 配置），顶部显示预加载进度。
 - 下载：后端实时抓页、**流式打 ZIP**（无固定 Content-Length）直推浏览器；zip 内平铺 `meta.json` + `0001.webp ...`，无内层文件夹。
@@ -94,19 +95,33 @@ vercel
 | `EHENTAI_IGNEOUS` | 手动指定已获取的 igneous；Workers/Vercel 可喂入 D1/KV 持久化的值 | 无 |
 | `EHENTAI_STATE_DIR` | 本地持久化目录 | `.data` |
 | `EHENTAI_SQLITE_FILE` | 本地 SQLite 文件名 | `eh.sqlite` |
-| `BK_EMAIL` / `BK_PASSWORD` | 哔咔账号，用于自动登录 | 无 |
-| `BK_TOKEN` | 已登录的哔咔 token，可绕过账号登录 | 无 |
+| `BK_EMAIL` / `BK_PASSWORD` | 哔咔账号，用于自动登录；token 失效会自动重登一次 | 无 |
+| `BK_TOKEN` | 已登录的哔咔 token；设置了就优先使用（覆盖缓存） | 无 |
 | `BK_API_BASE` | 哔咔 API 基地址 | `https://picaapi.go2778.com` |
 | `BK_IMAGE_QUALITY` | 图片质量：`low`/`medium`/`high`/`original` | `original` |
+| `BK_MEDIA_HOSTS` | 额外允许的哔咔图片域名（逗号或空格分隔，追加到内置列表） | 无 |
+| `JM_MEDIA_HOSTS` | 额外允许的禁漫图片域名 | 无 |
+| `EH_MEDIA_HOSTS` | 额外允许的 EH 缩略图域名 | 无 |
 
 `.env` 会自动加载。模板见 `.env.example`。
 
 ### EH / EXH 的 igneous 逻辑
 
 1. 启动时先读本地 SQLite / D1 / `EHENTAI_IGNEOUS`。
-2. 没有 igneous 时，用 `EHENTAI_COOKIE` + `EHENTAI_IGNEOUS_PROXY` 请求 exhentai 首页，从 `Set-Cookie: igneous=...` 拿值并持久化。
-3. 拿到有效 igneous 后在任意地区 IP 均可访问 EXH；拿不到就标记 blocked，不再重试，全量回退 EH。
+2. 没有 igneous 时，用 `EHENTAI_COOKIE` + `EHENTAI_IGNEOUS_PROXY` 请求 exhentai 首页，从 `Set-Cookie: igneous=...` 拿值并持久化（15s 超时）。
+3. 拿到有效 igneous 后在任意地区 IP 均可访问 EXH。只有源站明确回答「没有 igneous」（200/403）才会标记 blocked；网络或代理故障只做 10 分钟退避，不会写死。
 4. 已缓存 igneous 失效时，自动重取一次并刷新缓存；若仍失败则回退 EH。
+5. blocked 状态最多保留 6 小时，之后会自动再试一次，不需要手动删库。
+
+### BK 的 token 逻辑
+
+1. `BK_TOKEN` 环境变量优先于缓存。
+2. 缓存 token 被源站拒绝（HTTP 401/403 或 `code` 401/403）时，自动清缓存、重新登录并重试一次；重试仍失败才报错，不会无限重登。
+3. 同一时刻只会有一次登录请求（并发请求共用）。
+
+### 图片代理的域名白名单
+
+`bk` / `jm` 的图片地址来自各自 API，`eh` 的缩略图地址来自搜索结果，这三种都由客户端带 URL 过来，因此按域名白名单校验（见上表 `*_MEDIA_HOSTS`）。上游如果不是 `image/*`（或 `application/octet-stream`）会被拒绝，单张超过 64MB 也会被拒绝，避免这个代理被当成任意 https 抓取器。
 
 ## 缓存策略
 
@@ -158,6 +173,8 @@ api/                Vercel 入口
 
 - nhentai 匿名限流：搜索 10/min、详情 20/min、按 tag 15/min；配 API Key 可缓解。
 - EH 结果页缩略图会直接使用大图 URL（源站列表没有单独 thumb）。
+- ZIP 内页扩展名按实际媒体类型决定（EH 的 `viewer/...` 路径本身没有扩展名）。
+- 图片代理只回 `image/*`（拒绝 svg/html），单张上限 64MB。
 - JM 响应体与图片乱序逻辑参考了 <https://github.com/hect0x7/JMComic-Crawler-Python>（MIT）。
 - EH 下载偶尔有源站图片节点超时：单页会重试 3 次并尝试 EH 镜像；仍失败的页面会写占位说明，不破坏 ZIP 完整性。
 - 有明确要改的问题时，用 `--debug` 启动并把日志和请求 URL 一起反馈。

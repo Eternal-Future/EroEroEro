@@ -868,6 +868,9 @@
     $("[data-reader-next]").addEventListener("click", () => readerStep(1));
 
     els.reader.addEventListener("click", (e) => {
+      // The ‹ › buttons run their own handler; without this the bubbled click
+      // would step a second time.
+      if (e.target instanceof Element && e.target.closest(".reader-nav")) return;
       const stage = els.reader.querySelector(".reader-stage");
       const rect = stage.getBoundingClientRect();
       if (e.clientY < rect.top || e.clientY > rect.bottom) return;
