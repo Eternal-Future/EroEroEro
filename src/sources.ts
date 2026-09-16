@@ -12,6 +12,7 @@ import { searchEh, ehGallery, ehFetchMedia, ehBrowseTags } from "./ehentai";
 import { suggestEhTags, ehKeysForLocalizedQuery, ehCanonicalTagsFor } from "./ehtags";
 import { jmSearch, jmGallery, jmFetchMedia, jmTags, jmBrowseTags } from "./jm";
 import { bkSearch, bkGallery, bkFetchMedia, bkTags, bkBrowseTags } from "./bk";
+import { mediaSignature } from "./mediasign";
 import type { SortOrder } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -361,6 +362,14 @@ export function listSources(): Array<{ id: string; name: string }> {
   ];
 }
 
+/**
+ * Proxy URL for one media file. The signature binds (source, kind, path): the
+ * /img route only fetches URLs this server produced, so an attacker cannot
+ * point the proxy at a host of their choosing. It is a plain HMAC with no
+ * timestamp, so the same path always yields the same URL and browser/CDN caches
+ * keep working.
+ */
 export function buildMediaUrl(source: string, path: string, kind: "image" | "thumb"): string {
-  return `/api/source/${source}/img?path=${encodeURIComponent(path)}&kind=${kind}`;
+  const sig = mediaSignature(source, kind, path);
+  return `/api/source/${source}/img?path=${encodeURIComponent(path)}&kind=${kind}&sig=${sig}`;
 }

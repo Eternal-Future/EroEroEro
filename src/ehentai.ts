@@ -1,7 +1,7 @@
 import { USER_AGENT } from "./env";
 import { debugLog } from "./debug";
 import { ehGet, ehPut } from "./ehstore";
-import { allowedHostSuffixes, isAllowedMediaUrl, MediaUrlError } from "./media";
+import { mediaHostSuffixes, mediaUrlRejection, MediaUrlError } from "./media";
 import type {
   NormalizedGallery,
   NormalizedListItem,
@@ -37,13 +37,12 @@ const ACQUIRE_COOLDOWN_MS = 10 * 60 * 1000;
 const BLOCKED_RETRY_MS = 6 * 60 * 60 * 1000;
 let acquireCooldownUntil = 0;
 
-// Thumbnails are the one e-hentai media URL that arrives from the client, so
-// they are host-checked (EH_MEDIA_HOSTS extends this list). Page images come
-// out of e-hentai's own viewer HTML and are not client-controllable.
-const EH_MEDIA_HOSTS_DEFAULT = ["e-hentai.org", "exhentai.org", "ehgt.org", "hath.network"];
-
+// Thumbnails are the one e-hentai media URL that arrives from the client (page
+// images come out of e-hentai's own viewer HTML). Any public https host is
+// accepted — the /img URL signature limits requests to URLs this server built —
+// and EH_MEDIA_HOSTS can pin the list instead.
 function ehMediaHosts(): string[] {
-  return allowedHostSuffixes("EH_MEDIA_HOSTS", EH_MEDIA_HOSTS_DEFAULT);
+  return mediaHostSuffixes("EH_MEDIA_HOSTS");
 }
 
 export function setEhAcquireFetcher(fn: AcquireFetcher): void {
@@ -568,9 +567,8 @@ export async function ehFetchMedia(path: string, kind: "image" | "thumb"): Promi
   if (kind === "thumb") {
     // The thumbnail URL is client-supplied, so it has to be a host e-hentai
     // actually serves images from (see EH_MEDIA_HOSTS).
-    if (!isAllowedMediaUrl(path, ehMediaHosts())) {
-      throw new MediaUrlError("bad eh thumb path");
-    }
+    const rejection = mediaUrlRejection(path, ehMediaHosts());
+    if (rejection) throw new MediaUrlError(`eh thumb ${rejection}`);
     const referer = memoryState?.igneous ? "https://exhentai.org/" : "https://e-hentai.org/";
     debugLog("[eh] fetch thumb", path.slice(0, 80));
     const mode = memoryState?.igneous && path.includes("exhentai") ? "exh" : "eh";

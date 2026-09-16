@@ -4,7 +4,7 @@ import webpEncode, { init as webpEncInit } from "@jsquash/webp/encode.js";
 import { webpDecWasmBase64, webpEncWasmBase64 } from "./webp-wasm";
 import { USER_AGENT } from "./env";
 import { debugLog } from "./debug";
-import { allowedHostSuffixes, hostOf, isAllowedMediaUrl, MediaUrlError } from "./media";
+import { mediaHostSuffixes, hostOf, mediaUrlRejection, MediaUrlError } from "./media";
 import type {
   NormalizedGallery,
   NormalizedListItem,
@@ -27,24 +27,15 @@ function env(name: string, fallback: string): string {
 const JM_BASE = env("JM_BASE", "https://www.cdngwc.cc").replace(/\/+$/, "");
 const JM_CDN_COVER = env("JM_CDN_COVER", "https://cdn-msp.jmapiproxy1.cc").replace(/\/+$/, "");
 
-// Image URLs come straight from the API, so the allowlist has to cover the
-// mirrors JM hands out; whatever JM_BASE / JM_CDN_COVER point at is allowed too.
-const JM_MEDIA_HOSTS_DEFAULT = [
-  "jmapiproxy1.cc",
-  "jmapiproxy2.cc",
-  "jmapiproxy3.cc",
-  "jmapiproxy4.cc",
-  "jmapiproxy5.cc",
-  "jmcomic.me",
-  "jmcomic1.cc",
-  "cdngwc.cc",
-  "18comic.vip",
-  "18comic.org",
-];
-
+// JM rotates its CDN domains (and hands new ones out through the API), so the
+// host is not restricted by default: the /img URL signature is what stops
+// fabricated requests. JM_MEDIA_HOSTS can pin the list if you want it narrowed;
+// the configured JM_BASE / JM_CDN_COVER hosts stay allowed in that case.
 function jmMediaHosts(): string[] {
+  const pinned = mediaHostSuffixes("JM_MEDIA_HOSTS");
+  if (!pinned.length) return [];
   const configured = [hostOf(JM_BASE), hostOf(JM_CDN_COVER)].filter(Boolean) as string[];
-  return allowedHostSuffixes("JM_MEDIA_HOSTS", [...JM_MEDIA_HOSTS_DEFAULT, ...configured]);
+  return [...pinned, ...configured];
 }
 
 function md5Hex(s: string): string {
@@ -176,9 +167,8 @@ export async function jmFetchMedia(
   path: string,
   kind: "image" | "thumb",
 ): Promise<MediaFetchResult> {
-  if (!isAllowedMediaUrl(path, jmMediaHosts())) {
-    throw new MediaUrlError("jm media host not allowed");
-  }
+  const rejection = mediaUrlRejection(path, jmMediaHosts());
+  if (rejection) throw new MediaUrlError(`jm ${rejection}`);
   debugLog("[jm] fetch", kind, path.slice(0, 90));
   const res = await fetch(path, {
     headers: { "user-agent": USER_AGENT, referer: "http://localhost" },

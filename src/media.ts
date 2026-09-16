@@ -17,10 +17,16 @@ export function isValidMediaPath(path: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Host allowlist for sources that hand the proxy a full URL (jm/bk/eh thumbs).
-// Without it the /img route is an open https fetcher: anyone could point it at
-// an internal service and read the response back through this server.
-// Sources append extra hosts with `<SOURCE>_MEDIA_HOSTS` (comma/space separated).
+// Which upstream URLs may be fetched (jm/bk/eh hand the proxy a full URL).
+//
+// The primary control is the signature on the /img URL (see mediasign.ts): only
+// a path this server produced from a source adapter can be requested, so the
+// host is free to change — jm rotates CDN domains and a static allowlist would
+// break it. On top of that the URL must be https and must not point back into a
+// private network, which is cheap and works everywhere.
+//
+// `<SOURCE>_MEDIA_HOSTS` remains available as an opt-in narrowing when someone
+// wants to pin a CDN (comma/space separated suffixes).
 // ---------------------------------------------------------------------------
 function readEnvVar(name: string): string {
   const g = globalThis as any;
@@ -35,31 +41,106 @@ function suffixFromEnv(raw: string): string[] {
     .filter(Boolean);
 }
 
-/** Default suffixes plus whatever `<envName>` adds at call time. */
-export function allowedHostSuffixes(envName: string, defaults: string[]): string[] {
-  return [...defaults, ...suffixFromEnv(readEnvVar(envName))];
+/** Host suffixes pinned for this source, or [] when the source is unpinned. */
+export function mediaHostSuffixes(envName: string): string[] {
+  return suffixFromEnv(readEnvVar(envName));
 }
 
-/** True when `url` is https and its host is one of `suffixes` (or a subdomain). */
-export function isAllowedMediaUrl(url: string, suffixes: string[]): boolean {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return false;
-  }
-  if (parsed.protocol !== "https:") return false;
-  const host = parsed.hostname.toLowerCase();
-  return suffixes.some((s) => host === s || host.endsWith(`.${s}`));
-}
-
-/** Hostname of a configured base URL (used to auto-allow user-configured mirrors). */
+/** Hostname of a configured base URL (auto-allowed when a host list is pinned). */
 export function hostOf(url: string): string | null {
   try {
     return new URL(url).hostname.toLowerCase();
   } catch {
     return null;
   }
+}
+
+function hostMatchesSuffix(host: string, suffixes: string[]): boolean {
+  return suffixes.some((s) => host === s || host.endsWith(`.${s}`));
+}
+
+/** Loopback / link-local / RFC1918 / CGNAT / multicast literals. */
+function isPrivateIp(host: string): boolean {
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (v4) {
+    const a = Number(v4[1]);
+    const b = Number(v4[2]);
+    if (a === 0 || a === 10 || a === 127) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true;
+    if (a >= 224) return true;
+    return false;
+  }
+  return host.includes(":") ? isPrivateIpv6(host) : false;
+}
+
+/**
+ * IPv6 literal check. The WHATWG URL parser rewrites IPv4-mapped addresses into
+ * their hex form (`::ffff:127.0.0.1` becomes `::ffff:7f00:1`), so the groups are
+ * expanded and case-checked rather than pattern-matched.
+ */
+function isPrivateIpv6(host: string): boolean {
+  const halves = host.split("::");
+  let groups: string[];
+  if (halves.length === 2) {
+    const head = halves[0] ? halves[0].split(":") : [];
+    const tail = halves[1] ? halves[1].split(":") : [];
+    const fill = 8 - head.length - tail.length;
+    if (fill < 0) return false;
+    groups = [...head, ...new Array(fill).fill("0"), ...tail];
+  } else {
+    groups = host.split(":");
+  }
+  if (groups.length !== 8) return false;
+  const nums = groups.map((g) => Number.parseInt(g || "0", 16));
+  if (nums.some((n) => !Number.isFinite(n) || n < 0 || n > 0xffff)) return false;
+
+  const [g0, g1] = nums;
+  if ((g0 & 0xffc0) === 0xfe80) return true; // fe80::/10 link-local
+  if ((g0 & 0xfe00) === 0xfc00) return true; // fc00::/7 unique local
+  if (g0 === 0 && g1 === 0) return true; // ::, ::1, IPv4-compatible
+  // ::ffff:a.b.c.d (IPv4-mapped)
+  if (nums.slice(0, 6).every((n, i) => (i === 5 ? n === 0xffff : n === 0))) {
+    const a = nums[6] >> 8;
+    const b = nums[6] & 0xff;
+    const c = nums[7] >> 8;
+    const d = nums[7] & 0xff;
+    return isPrivateIp(`${a}.${b}.${c}.${d}`);
+  }
+  return false;
+}
+
+/** True for hosts that are clearly not public internet endpoints. */
+export function isPublicHttpHost(host: string): boolean {
+  const h = host.toLowerCase().replace(/^\[|\]$/g, "");
+  if (!h) return false;
+  if (h === "localhost" || h.endsWith(".localhost")) return false;
+  for (const suffix of [".local", ".internal", ".home.arpa", ".localdomain"]) {
+    if (h.endsWith(suffix)) return false;
+  }
+  return !isPrivateIp(h);
+}
+
+/**
+ * Returns a reason string when `url` must not be fetched, else null.
+ * An empty `pinnedSuffixes` means the host is not restricted.
+ */
+export function mediaUrlRejection(url: string, pinnedSuffixes: string[] = []): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return "malformed media url";
+  }
+  if (parsed.protocol !== "https:") return "media url must be https";
+  const host = parsed.hostname.toLowerCase();
+  if (!isPublicHttpHost(host)) return `media host is not public: ${host}`;
+  if (pinnedSuffixes.length && !hostMatchesSuffix(host, pinnedSuffixes)) {
+    return `media host not in the pinned list: ${host}`;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------

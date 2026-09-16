@@ -9,6 +9,7 @@ import { getCachedImage, imageCacheKey, putCachedImage } from "./imageCache";
 import { maybeInitEhStore } from "./ehstore";
 import { aggregateSearch } from "./query";
 import { getNhPublishDate } from "./nhDates";
+import { verifyMediaSignature } from "./mediasign";
 import {
   contentTypeFor,
   discardBody,
@@ -116,6 +117,15 @@ function clampInt(raw: string | undefined, fallback: number, min: number, max: n
   const n = Number(raw ?? fallback);
   if (!Number.isFinite(n)) return fallback;
   return Math.min(max, Math.max(min, Math.floor(n)));
+}
+
+// Gallery ids are nhentai numbers, `{gid}_{token}` on e-hentai, jm digits or
+// bk ObjectIds. Keeping them to this shape stops an id from adding path
+// segments or query strings to the upstream request URL.
+const SAFE_GALLERY_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+function invalidGalleryId(id: string | undefined): boolean {
+  return !id || !SAFE_GALLERY_ID.test(id);
 }
 
 // ---------------------------------------------------------------------------
@@ -260,7 +270,7 @@ app.get("/api/source/:source/search", async (c) => {
 app.get("/api/source/:source/gallery/:id", async (c) => {
   const adapter = src(c);
   const id = c.req.param("id");
-  if (!id) return c.json({ error: "invalid gallery id" }, 400);
+  if (invalidGalleryId(id)) return c.json({ error: "invalid gallery id" }, 400);
 
   const g = await adapter.gallery(id, authKey(c));
   return c.json({
@@ -326,6 +336,13 @@ app.get("/api/source/:source/img", async (c) => {
   const adapter = src(c);
   const path = c.req.query("path") ?? "";
   const kind = c.req.query("kind") === "image" ? "image" : "thumb";
+
+  // Only URLs this server handed out (search/gallery responses) may be
+  // proxied: without the signature /img would fetch any https URL a caller
+  // names, which is both an SSRF primitive and an open proxy.
+  if (!verifyMediaSignature(adapter.id, kind, path, c.req.query("sig"))) {
+    return mediaError(403, "invalid or missing media signature");
+  }
 
   const cacheKey = imageCacheKey(adapter.id, kind, path);
   let data: Uint8Array;
@@ -401,7 +418,7 @@ app.get("/api/source/:source/img", async (c) => {
 app.get("/api/source/:source/download/:id", async (c) => {
   const adapter = src(c);
   const id = c.req.param("id");
-  if (!id) return c.json({ error: "invalid gallery id" }, 400);
+  if (invalidGalleryId(id)) return c.json({ error: "invalid gallery id" }, 400);
 
   const g = await adapter.gallery(id, authKey(c));
 

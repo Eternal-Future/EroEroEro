@@ -96,13 +96,14 @@ vercel
 | `EHENTAI_IGNEOUS` | 手动指定已获取的 igneous；Workers/Vercel 可喂入 D1/KV 持久化的值 | 无 |
 | `EHENTAI_STATE_DIR` | 本地持久化目录 | `.data` |
 | `EHENTAI_SQLITE_FILE` | 本地 SQLite 文件名 | `eh.sqlite` |
+| `MEDIA_SIGN_KEY` | 图片代理 URL 的签名密钥；多实例/多区域部署建议固定。不设则用 `ERO_PASSWORD`，都没有则每进程随机（重启后图片 URL 会变） | 无 |
 | `BK_EMAIL` / `BK_PASSWORD` | 哔咔账号，用于自动登录；token 失效会自动重登一次 | 无 |
 | `BK_TOKEN` | 已登录的哔咔 token；设置了就优先使用（覆盖缓存） | 无 |
 | `BK_API_BASE` | 哔咔 API 基地址 | `https://picaapi.go2778.com` |
 | `BK_IMAGE_QUALITY` | 图片质量：`low`/`medium`/`high`/`original` | `original` |
-| `BK_MEDIA_HOSTS` | 额外允许的哔咔图片域名（逗号或空格分隔，追加到内置列表） | 无 |
-| `JM_MEDIA_HOSTS` | 额外允许的禁漫图片域名 | 无 |
-| `EH_MEDIA_HOSTS` | 额外允许的 EH 缩略图域名 | 无 |
+| `BK_MEDIA_HOSTS` | 可选：把哔咔图片域名钉死（逗号或空格分隔的后缀）。**默认不限制域名** | 无 |
+| `JM_MEDIA_HOSTS` | 可选：把禁漫图片域名钉死 | 无 |
+| `EH_MEDIA_HOSTS` | 可选：把 EH 缩略图域名钉死 | 无 |
 
 `.env` 会自动加载。模板见 `.env.example`。
 
@@ -120,9 +121,15 @@ vercel
 2. 缓存 token 被源站拒绝（HTTP 401/403 或 `code` 401/403）时，自动清缓存、重新登录并重试一次；重试仍失败才报错，不会无限重登。
 3. 同一时刻只会有一次登录请求（并发请求共用）。
 
-### 图片代理的域名白名单
+### 图片代理怎么防止被当成抓取器
 
-`bk` / `jm` 的图片地址来自各自 API，`eh` 的缩略图地址来自搜索结果，这三种都由客户端带 URL 过来，因此按域名白名单校验（见上表 `*_MEDIA_HOSTS`）。上游如果不是 `image/*`（或 `application/octet-stream`）会被拒绝，单张超过 64MB 也会被拒绝，避免这个代理被当成任意 https 抓取器。
+`bk` / `jm` 的图片地址来自各自 API，`eh` 的缩略图来自搜索结果——这三种都是客户端带着 URL 来请求的。**不限域名**（JM 这类上游会换域名，钉死域名迟早失效），改用三层：
+
+1. **签名**：`/img` 的 URL 由后端在返回搜索结果/详情时签好（`&sig=`，HMAC-SHA256，绑定 `渠道+kind+path`）。只有本服务发出去的地址能通过校验，攻击者无法凭空构造 URL 让服务器去抓。签名不含时间戳，所以同一张图的 URL 恒定，浏览器和 CDN 缓存不会碎掉。
+2. **私有地址拦截**：即使签名合法，目标必须是 https 且不能是回环/内网/链路本地地址（含 IPv6、`::ffff:127.0.0.1` 这种写法），挡掉 SSRF 打内网服务。
+3. **响应类型与体积**：上游不是 `image/*`（或 `application/octet-stream`）就拒绝（否则 HTML/SVG 会在本站源上执行），单张超过 64MB 拒绝。
+
+想额外钉死域名就设 `*_MEDIA_HOSTS`（钉了之后，配置里的 `BK_API_BASE` / `JM_BASE` / `JM_CDN_COVER` 域名会自动放行）。
 
 ## 缓存策略
 

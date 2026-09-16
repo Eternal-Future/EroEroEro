@@ -2,7 +2,7 @@ import CryptoJS from "crypto-js";
 import { USER_AGENT } from "./env";
 import { debugLog } from "./debug";
 import { ehGet, ehPut, ehDel } from "./ehstore";
-import { allowedHostSuffixes, hostOf, isAllowedMediaUrl, MediaUrlError } from "./media";
+import { mediaHostSuffixes, hostOf, mediaUrlRejection, MediaUrlError } from "./media";
 import type {
   NormalizedGallery,
   NormalizedListItem,
@@ -28,16 +28,14 @@ function env(name: string, fallback: string): string {
 const BK_API_BASE = env("BK_API_BASE", "https://picaapi.go2778.com/").replace(/\/+$/, "") + "/";
 const BK_IMAGE_QUALITY = env("BK_IMAGE_QUALITY", "original");
 
-// PicAcg hands out image URLs on its storage hosts; the API base and anything
-// listed in BK_MEDIA_HOSTS are allowed too.
-const BK_MEDIA_HOSTS_DEFAULT = ["picacomic.com", "picacomic.xyz", "manhuabika.com"];
-
+// PicAcg hands out image URLs on storage hosts. BK_MEDIA_HOSTS can pin them;
+// otherwise any public https host passes, because the /img URL signature
+// already limits requests to paths this server handed out.
 function bkMediaHosts(): string[] {
+  const pinned = mediaHostSuffixes("BK_MEDIA_HOSTS");
+  if (!pinned.length) return [];
   const configured = hostOf(BK_API_BASE);
-  return allowedHostSuffixes("BK_MEDIA_HOSTS", [
-    ...BK_MEDIA_HOSTS_DEFAULT,
-    ...(configured ? [configured] : []),
-  ]);
+  return configured ? [...pinned, configured] : pinned;
 }
 
 function bytes(str: string): Uint8Array {
@@ -382,9 +380,8 @@ export async function bkFetchMedia(
   path: string,
   _kind: "image" | "thumb",
 ): Promise<MediaFetchResult> {
-  if (!isAllowedMediaUrl(path, bkMediaHosts())) {
-    throw new MediaUrlError("bk media host not allowed");
-  }
+  const rejection = mediaUrlRejection(path, bkMediaHosts());
+  if (rejection) throw new MediaUrlError(`bk ${rejection}`);
   debugLog("[bk] fetch", path.slice(0, 90));
   const res = await fetch(path, {
     headers: {
